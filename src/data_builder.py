@@ -6,10 +6,9 @@ from torch.utils.data import Dataset, DataLoader
 from transformers import AutoTokenizer
 
 class AuthorshipDataset(Dataset):
-    def __init__(self, csv_path, view_size=16, ):
+    def __init__(self, df: pd.DataFrame, view_size=16, ):
 
         self.view_size = view_size
-        df = pd.read_csv(csv_path)
 
         # Group by authors -> {author_id: [text1, text2, ...]}
         self.grouped_data = df.groupby('author')['text'].apply(list).to_dict()
@@ -59,20 +58,25 @@ class AuthorshipCollator:
         
         return input_ids, attention_mask, labels
     
-def build_supervised_dataset(csv_path: str, tokeniser, batch_size=1024, view_size=16, max_seq_len=512):
+def build_supervised_dataset(df: pd.DataFrame, tokeniser, batch_size=1024, view_size=16, max_seq_len=512, max_docs=10000):
     """Tokenise texts and arange into batches.
 
     Args:
-        csv_path: file with columns 'author' and 'text'.
+        df: Dataframe with columns 'author' and 'text'.
         tokeniser: instance of a tokeniser.
         batch_size: the number of unique authors in a single training step. For example, if you want to contrast 1,024 authors, batch_size should be 1,024.
         view_size: the number of different documents to sample from each author in a single batch. Must be greater than 1.
         max_seq_len: maximum number of tokens allowed per document.
+        max_docs: maximum number of total documents to sample
 
     Returns:
         Dataloader containig batches of tokenised sequences of shape [B, V, L]
     """
-    dataset = AuthorshipDataset(csv_path=csv_path, view_size=view_size)
+
+    if max_docs and len(df) > max_docs:
+        df = df.sample(n=max_docs, random_state=42).reset_index(drop=True)
+
+    dataset = AuthorshipDataset(df=df, view_size=view_size)
     collator = AuthorshipCollator(tokeniser, view_size, max_seq_len)
 
     return DataLoader(
