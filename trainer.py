@@ -30,6 +30,8 @@ class ContrastiveTrainer(nn.Module):
         flat_mask = attention_mask.view(-1, seq_len)
 
         # Calculate number of minibatches
+        if (batch_size * view_size) % self.minibatch_size != 0:
+            raise ValueError(f"Global batch size * view size must be divisible by minibatch size. {batch_size*view_size} is not divisible by {self.minibatch_size}.")
         n = int(ceil(batch_size * view_size / self.minibatch_size))
 
         # Chunk batch into minibatches
