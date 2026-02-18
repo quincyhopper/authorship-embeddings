@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch
 
 class ModelWrapper(nn.Module):
-    """Wrapper for transformer + projection layer."""
+    """Wrapper for transformer + mean pool + projection layer."""
     def __init__(self, model_code:str):
         """
         Args:
@@ -59,4 +59,3 @@ class ModelWrapper(nn.Module):
         sum_mask = torch.clamp(input_mask_expanded.sum(1), min=1e-9)
 
         return sum_embeddings / sum_mask
-    

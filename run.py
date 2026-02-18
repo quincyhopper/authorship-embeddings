@@ -1,68 +1,58 @@
-import torch
 import pandas as pd
-from tqdm import tqdm 
-from data_builder import build_supervised_dataset, filter_authors
+import lightning as L
+from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 from transformers import AutoTokenizer
-from model import ModelWrapper
 from trainer import ContrastiveTrainer
-from sklearn.model_selection import train_test_split
+from data_builder import AuthorshipDataModule
 
 MODEL_CODE = 'prajjwal1/bert-tiny'
 DATA_PATH = 'data/blogtext_16.csv'
-EPOCHS = 20
-DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-GLOBAL_BATCH_SIZE = 256
+MAX_EPOCHS = 3
+GLOBAL_BATCH_SIZE = 32
 VIEW_SIZE = 3
-MAX_LEN = 32
+MAX_SEQ_LEN = 32
 MINIBATCH_SIZE = 8
-
-def train(trainer, train_loader, epochs):
-    trainer.model.train()
-
-    for epoch in range(epochs):
-
-        epoch_loss = 0.0
-
-        for batch in tqdm(train_loader):
-
-            loss = trainer.train(batch)
-            epoch_loss += loss
-
-        print(f"Epoch [{epoch+1}/{epochs}] | Train loss {epoch_loss/len(train_loader)}")
 
 if __name__ == "__main__":
 
-    # Initialise tokeniser and model
-    tokeniser = AutoTokenizer.from_pretrained(MODEL_CODE)
-    model = ModelWrapper(MODEL_CODE).to(DEVICE)
-
-    # Prepare data and loader
-    print(f"Initialising loader")
     df = pd.read_csv(DATA_PATH)
 
-    train_df, val_df = train_test_split(
-        df,
-        train_size=0.05,
-        stratify=df['author']
+    # Init Data and Model
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_CODE)
+    model = ContrastiveTrainer(MODEL_CODE, minibatch_size=MINIBATCH_SIZE)
+
+    data_module = AuthorshipDataModule(df, tokenizer=tokenizer, 
+                                       batch_size=GLOBAL_BATCH_SIZE, 
+                                       view_size=VIEW_SIZE,
+                                       max_seq_len=MAX_SEQ_LEN)
+
+    checkpoint_callback = ModelCheckpoint(
+        monitor="val_loss",
+        dirpath="checkpoints/",
+        filename="star-{epoch:02d}-{val_loss:.2f}",
+        save_top_k=1,
+        mode="min",
     )
 
-    train_loader = build_supervised_dataset(
-        train_df,
-        tokeniser=tokeniser,
-        batch_size=GLOBAL_BATCH_SIZE,
-        view_size=VIEW_SIZE,
-        max_seq_len=MAX_LEN
+    # Init early stoppping
+    early_stopping_callback = EarlyStopping(
+        monitor='val_loss',
+        patience=3,
+        verbose=True,
+        mode='min'
     )
 
-    # Initialise trainer
-    print(f"Intialising trainer")
-    train_model = ContrastiveTrainer(model,
-                                    device=DEVICE,
-                                    learning_rate=1e-4,
-                                    weight_decay=None, 
-                                    epochs=EPOCHS, 
-                                    minibatch_size=MINIBATCH_SIZE
-                                    )
-    
-    print("Starting training")
-    train(train_model, train_loader, EPOCHS)
+    # Init Lightning Trainer
+    trainer = L.Trainer(
+        max_epochs=MAX_EPOCHS,
+        accelerator="auto",
+        devices=1,
+        precision="16-mixed",
+        callbacks=[checkpoint_callback, early_stopping_callback],
+        logger=True,
+        log_every_n_steps=1,
+        val_check_interval=0.5
+    )
+
+    # 3. Train
+    trainer.fit(model, data_module)

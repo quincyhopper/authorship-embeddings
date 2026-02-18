@@ -1,123 +1,95 @@
-import torch.nn as nn
 import torch
-import random
-from torch.amp import autocast, GradScaler
-from torch.optim import AdamW
+import lightning as L
+from model import ModelWrapper
 from loss import SupConLoss
-from math import ceil
 
-class ContrastiveTrainer(nn.Module):
-    def __init__(self, model, device, learning_rate, weight_decay, epochs, minibatch_size):
+class ContrastiveTrainer(L.LightningModule):
+    def __init__(self, model_code, lr=1e-4, epochs=1, minibatch_size=8):
         super().__init__()
 
-        self.device = device
-        self.model = model.to(self.device)
-        self.learning_rate = learning_rate
-        self.weight_decay = weight_decay
-        self.num_training_steps = epochs
-        self.minibatch_size = minibatch_size
-
-        self.optim = AdamW(self.model.parameters(), lr=learning_rate)
+        self.save_hyperparameters()
+        self.model = ModelWrapper(model_code)
         self.loss_func = SupConLoss()
-        self.scaler = GradScaler()
 
-    def train(self, batch):
+        self.automatic_optimization = False
 
-        input_ids, attention_mask, labels = [t.to(self.device) for t in batch]
+    def configure_optimizers(self):
+        optimizer = torch.optim.AdamW(self.parameters(), lr=self.hparams.lr)
+
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=self.hparams.epochs, eta_min=1e-6
+            )
+
+        return [optimizer], [scheduler]
+
+    def training_step(self, batch, batch_idx):
+
+        optim = self.optimizers()
+
+        input_ids, attention_mask, labels = batch
         batch_size, view_size, seq_len = input_ids.shape
-
-        self.optim.zero_grad()
 
         # Flatten batch: [B*V, D]
         flat_ids = input_ids.view(-1, seq_len)
         flat_mask = attention_mask.view(-1, seq_len)
 
-        # Calculate number of minibatches
-        if (batch_size * view_size) % self.minibatch_size != 0:
-            raise ValueError(f"Global batch size * view size must be divisible by minibatch size. {batch_size*view_size} is not divisible by {self.minibatch_size}.")
-        n = int(ceil(batch_size * view_size / self.minibatch_size))
-
         # Chunk batch into minibatches
+        n = (batch_size * view_size // self.hparams.minibatch_size) # Calculate number of minibatches
         minibatch_input_ids = torch.chunk(flat_ids, chunks=n)
         minibatch_attention_mask = torch.chunk(flat_mask, chunks=n)
 
         # 1. Compute embeddings for entire batch (no activations or gradients)
         with torch.no_grad():
-            with autocast(device_type='cuda'):
-                anchors = torch.vstack([self.model(id, mask) for id, mask in zip(minibatch_input_ids, minibatch_attention_mask)])
+            anchors = torch.vstack([self.model(id, mask) for id, mask in zip(minibatch_input_ids, minibatch_attention_mask)])
 
         # 2. Re-compute embeddings for minibatch, computing loss and gradients
         for j, (id, mask) in enumerate(zip(minibatch_input_ids, minibatch_attention_mask)):
-            with autocast(device_type='cuda'):
             
-                # Make a copy of the current batch embeddings
-                rep = anchors.clone()
+            # Make a copy of the current batch embeddings
+            rep = anchors.clone()
 
-                # Determine indices of current batch
-                start = j * self.minibatch_size
-                end = (j+1) * self.minibatch_size
+            # Determine indices of current batch
+            start = j * self.hparams.minibatch_size
+            end = (j+1) * self.hparams.minibatch_size
 
-                # Replace frozen embedding with fresh embeddings for this chunk
-                rep[start:end] = self.model(id, mask)
-
-                # Reshape back to 3D tensor: [B, V, D]
-                rep_views = rep.view(batch_size, view_size, -1)
-
-                # Calculate loss using ALL documents in global batch
-                loss = self.loss_func(rep_views, labels)
-
-            # Accumulate gradients on fresh chunk
-            self.scaler.scale(loss).backward()
-
-        self.scaler.step(self.optim)
-        self.scaler.update()
-
-        return loss.item()
-    
-    def eval(self, batch):
-
-        # Don't track gradients
-        self.model.eval()
-        with torch.no_grad():
-            input_ids, attention_mask, labels = batch
-            batch_size, view_size, seq_len = input_ids.shape
-
-            # Flatten batch: [B*V, D]
-            flat_ids = input_ids.view(-1, seq_len)
-            flat_mask = attention_mask.view(-1, seq_len)
-
-            # Calculate number of minibatches
-            n = int(ceil(batch_size * view_size / self.minibatch_size))
-
-            # Chunk batch into minibatches
-            minibatch_input_ids = torch.chunk(flat_ids, chunks=n)
-            minibatch_attention_mask = torch.chunk(flat_mask, chunks=n)
-
-            # Generate embeddings for entire batch: [B*V, D]
-            all_embeddings = torch.vstack([self.model(id, mask) for id, mask in zip(minibatch_input_ids, minibatch_attention_mask)])
+            # Replace frozen embedding with fresh embeddings for this chunk
+            rep[start:end] = self.model(id, mask)
 
             # Reshape back to 3D tensor: [B, V, D]
-            rep_views = all_embeddings.reshape(batch_size, view_size, -1)
+            rep_views = rep.view(batch_size, view_size, -1)
 
-            # Compute SupCon loss
+            # Calculate loss using ALL documents in global batch
             loss = self.loss_func(rep_views, labels)
+            self.manual_backward(loss)
 
-            # --- Calculate accuracy ---
-            # randomly sample 2 views (two texts from each author)
-            # NOTE: probably replace this or remove it entirely
-            samples = random.sample(range(rep_views.shape[1]), k=2)
-            anchors = rep_views[:, samples[0], :]  # [B, D]
-            replicas = rep_views[:, samples[1], :] # [B, D]
+        with torch.no_grad():
+            self.log('train_loss', loss, prog_bar=True)
 
-            # Compute similarity between all anchors and replicas: [B, B]
-            logits = torch.matmul(anchors, replicas.T)
+        optim.step()
 
-            # Positive pairs are the diagonal
-            target = torch.arange(batch_size)
-            preds = torch.argmax(logits, dim=1)
-            accuracy = (preds == target).float().mean()
+    def validation_step(self, batch, batch_idx):
 
-        # Switch back to train mode
-        self.model.train()
+        input_ids, attention_mask, labels = batch
+        batch_size, view_size, seq_len = input_ids.shape
 
-        return loss.item(), accuracy.item()
+        # Flatten batch: [B*V, D]
+        flat_ids = input_ids.view(-1, seq_len)
+        flat_mask = attention_mask.view(-1, seq_len)
+
+        # Chunk batch into minibatches
+        n = (batch_size * view_size // self.hparams.minibatch_size) # Calculate number of minibatches
+        minibatch_input_ids = torch.chunk(flat_ids, chunks=n)
+        minibatch_attention_mask = torch.chunk(flat_mask, chunks=n)
+
+        # Compute embeddings
+        anchors = torch.vstack([self.model(id, mask) for id, mask in zip(minibatch_input_ids, minibatch_attention_mask)])
+
+        # Reshape back to 3D tensor: [B, V, D]
+        rep_views = anchors.view(batch_size, view_size, -1)
+
+        # Calculate loss 
+        val_loss = self.loss_func(rep_views, labels)
+
+        self.log('val_loss', val_loss, prog_bar=True, sync_dist=True)
+
+        return val_loss

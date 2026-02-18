@@ -1,7 +1,8 @@
 import torch
-import torch.nn as nn
 import pandas as pd
 import random
+import lightning as L
+from sklearn.model_selection import train_test_split
 from torch.utils.data import Dataset, DataLoader
 
 class AuthorshipDataset(Dataset):
@@ -31,7 +32,7 @@ class AuthorshipDataset(Dataset):
         }
     
 class AuthorshipCollator:
-    def __init__(self, tokenizer, view_size, max_len):
+    def __init__(self, tokenizer, view_size, max_len=512):
         self.tokenizer = tokenizer
         self.view_size = view_size
         self.max_len = max_len
@@ -61,35 +62,42 @@ class AuthorshipCollator:
         
         return input_ids, attention_mask, labels
     
-def filter_authors(df: pd.DataFrame, min_docs: int):
+class AuthorshipDataModule(L.LightningDataModule):
+    def __init__(self, df, tokenizer, batch_size=256, view_size=3, max_seq_len=512):
+        super().__init__()
+        self.df = df
+        self.tokenizer = tokenizer
+        self.batch_size = batch_size
+        self.view_size = view_size
+        self.max_seq_len = max_seq_len
 
-    author_counts = df['author'].value_counts()
-    valid_authors = author_counts[author_counts >= min_docs].index
+    def setup(self, stage=None):
+        self.train_df, self.val_df = train_test_split(
+            self.df, train_size=0.8, stratify=self.df['author']
+        )
 
-    return df[df['author'].isin(valid_authors)].copy()
+    def train_dataloader(self):
+        dataset = AuthorshipDataset(self.train_df, self.view_size)
+        collator = AuthorshipCollator(self.tokenizer, self.view_size, self.max_seq_len)
+
+        return DataLoader(
+            dataset,
+            batch_size=self.batch_size,
+            shuffle=True,
+            collate_fn=collator,
+            num_workers=2,
+            drop_last=True
+        )
     
-def build_supervised_dataset(df: pd.DataFrame, tokeniser, batch_size=1024, view_size=16, max_seq_len=512):
-    """Tokenise texts and arange into batches.
+    def val_dataloader(self):
+        dataset = AuthorshipDataset(self.val_df, self.view_size)
+        collator = AuthorshipCollator(self.tokenizer, self.view_size, self.max_seq_len)
 
-    Args:
-        df: Dataframe with columns 'author' and 'text'.
-        tokeniser: instance of a tokeniser.
-        batch_size: the number of unique authors in a single training step. For example, if you want to contrast 1,024 authors, batch_size should be 1,024.
-        view_size: the number of different documents to sample from each author in a single batch. Must be greater than 1.
-        max_seq_len: maximum number of tokens allowed per document.
-
-    Returns:
-        Dataloader containig batches of tokenised sequences of shape [B, V, L]
-    """
-
-    dataset = AuthorshipDataset(df=df, view_size=view_size)
-    collator = AuthorshipCollator(tokeniser, view_size, max_seq_len)
-
-    return DataLoader(
-        dataset,
-        batch_size=batch_size,
-        shuffle=True,
-        collate_fn=collator,
-        num_workers=4,
-        drop_last=True
-    )
+        return DataLoader(
+            dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            collate_fn=collator,
+            num_workers=2,
+            drop_last=True
+        )
