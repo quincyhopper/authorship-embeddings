@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-class MySupCon(nn.Module):
+class SupConLoss(nn.Module):
     def __init__(self, temperature=0.1):
         super().__init__()
         self.temperature = temperature
