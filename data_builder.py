@@ -3,15 +3,16 @@ import torch.nn as nn
 import pandas as pd
 import random
 from torch.utils.data import Dataset, DataLoader
-from transformers import AutoTokenizer
 
 class AuthorshipDataset(Dataset):
-    def __init__(self, df: pd.DataFrame, view_size=16, ):
+    def __init__(self, df: pd.DataFrame, view_size: int):
 
         self.view_size = view_size
 
         # Group by authors -> {author_id: [text1, text2, ...]}
         self.grouped_data = df.groupby('author')['text'].apply(list).to_dict()
+
+        # Create list of author IDs
         self.author_ids = list(self.grouped_data.keys())
 
     def __len__(self):
@@ -21,11 +22,12 @@ class AuthorshipDataset(Dataset):
         author_id = self.author_ids[index]
         all_texts = self.grouped_data[author_id] # List
         
+        # Select V texts from author
         samples = random.choices(all_texts, k=self.view_size)
 
         return {
-            "texts": samples, # List of view_size strings
-            "label": index    # List index is unique integer ID
+            "label": index,    # List index is unique integer ID
+            "texts": samples # List of V strings
         }
     
 class AuthorshipCollator:
@@ -35,6 +37,7 @@ class AuthorshipCollator:
         self.max_len = max_len
 
     def __call__(self, batch):
+
         # Extract labels
         labels = torch.tensor([item['label'] for item in batch])
         
@@ -58,7 +61,7 @@ class AuthorshipCollator:
         
         return input_ids, attention_mask, labels
     
-def build_supervised_dataset(df: pd.DataFrame, tokeniser, batch_size=1024, view_size=16, max_seq_len=512, max_docs=10000):
+def build_supervised_dataset(df: pd.DataFrame, tokeniser, batch_size=1024, view_size=16, max_seq_len=512):
     """Tokenise texts and arange into batches.
 
     Args:
@@ -67,14 +70,10 @@ def build_supervised_dataset(df: pd.DataFrame, tokeniser, batch_size=1024, view_
         batch_size: the number of unique authors in a single training step. For example, if you want to contrast 1,024 authors, batch_size should be 1,024.
         view_size: the number of different documents to sample from each author in a single batch. Must be greater than 1.
         max_seq_len: maximum number of tokens allowed per document.
-        max_docs: maximum number of total documents to sample
 
     Returns:
         Dataloader containig batches of tokenised sequences of shape [B, V, L]
     """
-
-    if max_docs and len(df) > max_docs:
-        df = df.sample(n=max_docs, random_state=42).reset_index(drop=True)
 
     dataset = AuthorshipDataset(df=df, view_size=view_size)
     collator = AuthorshipCollator(tokeniser, view_size, max_seq_len)
@@ -84,5 +83,6 @@ def build_supervised_dataset(df: pd.DataFrame, tokeniser, batch_size=1024, view_
         batch_size=batch_size,
         shuffle=True,
         collate_fn=collator,
-        num_workers=4
+        num_workers=4,
+        drop_last=True
     )
