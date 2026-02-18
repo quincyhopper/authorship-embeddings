@@ -1,6 +1,7 @@
 import torch.nn as nn
 import torch
 import random
+from torch.amp import autocast, GradScaler
 from torch.optim import AdamW
 from loss import SupConLoss
 from math import ceil
@@ -11,12 +12,14 @@ class ContrastiveTrainer(nn.Module):
 
         self.device = device
         self.model = model.to(self.device)
-        self.optim = AdamW(self.model.parameters(), lr=learning_rate)
-        self.loss_func = SupConLoss()
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
         self.num_training_steps = epochs
         self.minibatch_size = minibatch_size
+
+        self.optim = AdamW(self.model.parameters(), lr=learning_rate)
+        self.loss_func = SupConLoss()
+        self.scaler = GradScaler()
 
     def train(self, batch):
 
@@ -40,31 +43,34 @@ class ContrastiveTrainer(nn.Module):
 
         # 1. Compute embeddings for entire batch (no activations or gradients)
         with torch.no_grad():
-            anchors = torch.vstack([self.model(id, mask) for id, mask in zip(minibatch_input_ids, minibatch_attention_mask)])
+            with autocast(device_type='cuda'):
+                anchors = torch.vstack([self.model(id, mask) for id, mask in zip(minibatch_input_ids, minibatch_attention_mask)])
 
         # 2. Re-compute embeddings for minibatch, computing loss and gradients
         for j, (id, mask) in enumerate(zip(minibatch_input_ids, minibatch_attention_mask)):
+            with autocast(device_type='cuda'):
             
-            # Make a copy of the current batch embeddings
-            rep = anchors.clone()
+                # Make a copy of the current batch embeddings
+                rep = anchors.clone()
 
-            # Determine indices of current batch
-            start = j * self.minibatch_size
-            end = (j+1) * self.minibatch_size
+                # Determine indices of current batch
+                start = j * self.minibatch_size
+                end = (j+1) * self.minibatch_size
 
-            # Replace frozen embedding with fresh embeddings for this chunk
-            rep[start:end] = self.model(id, mask)
+                # Replace frozen embedding with fresh embeddings for this chunk
+                rep[start:end] = self.model(id, mask)
 
-            # Reshape back to 3D tensor: [B, V, D]
-            rep_views = rep.view(batch_size, view_size, -1)
+                # Reshape back to 3D tensor: [B, V, D]
+                rep_views = rep.view(batch_size, view_size, -1)
 
-            # Calculate loss using ALL documents in global batch
-            loss = self.loss_func(rep_views, labels)
+                # Calculate loss using ALL documents in global batch
+                loss = self.loss_func(rep_views, labels)
 
             # Accumulate gradients on fresh chunk
-            loss.backward()
+            self.scaler.scale(loss).backward()
 
-        self.optim.step()
+        self.scaler.step(self.optim)
+        self.scaler.update()
 
         return loss.item()
     
