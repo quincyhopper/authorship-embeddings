@@ -2,7 +2,7 @@ import torch.nn as nn
 import torch
 import random
 from torch.optim import AdamW
-from loss import MySupCon
+from loss import SupConLoss
 from math import ceil
 
 class ContrastiveTrainer(nn.Module):
@@ -12,7 +12,7 @@ class ContrastiveTrainer(nn.Module):
         self.device = device
         self.model = model.to(self.device)
         self.optim = AdamW(self.model.parameters(), lr=learning_rate)
-        self.loss_func = MySupCon()
+        self.loss_func = SupConLoss()
         self.learning_rate = learning_rate
         self.weight_decay = weight_decay
         self.num_training_steps = epochs
