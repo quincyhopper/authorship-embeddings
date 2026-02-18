@@ -8,7 +8,7 @@ from trainer import ContrastiveTrainer
 from sklearn.model_selection import train_test_split
 
 MODEL_CODE = 'prajjwal1/bert-tiny'
-DATA_PATH = 'data/blogtext.csv'
+DATA_PATH = 'data/blogtext_16.csv'
 EPOCHS = 20
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 GLOBAL_BATCH_SIZE = 256
@@ -38,8 +38,7 @@ if __name__ == "__main__":
 
     # Prepare data and loader
     print(f"Initialising loader")
-    df = pd.read_csv(DATA_PATH)        # 681,284 rows
-    df = filter_authors(df, VIEW_SIZE) # Remove authors that don't have enough texts
+    df = pd.read_csv(DATA_PATH)
 
     train_df, val_df = train_test_split(
         df,
