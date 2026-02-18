@@ -61,6 +61,13 @@ class AuthorshipCollator:
         
         return input_ids, attention_mask, labels
     
+def filter_authors(df: pd.DataFrame, min_docs: int):
+
+    author_counts = df['author'].value_counts()
+    valid_authors = author_counts[author_counts >= min_docs].index
+
+    return df[df['author'].isin(valid_authors)].copy()
+    
 def build_supervised_dataset(df: pd.DataFrame, tokeniser, batch_size=1024, view_size=16, max_seq_len=512):
     """Tokenise texts and arange into batches.
 
