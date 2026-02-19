@@ -63,7 +63,7 @@ class ContrastiveTrainer(L.LightningModule):
             self.manual_backward(loss)
 
         with torch.no_grad():
-            self.log('train_loss', loss, prog_bar=True)
+            self.log('train_loss', loss, prog_bar=True, sync_dist=True)
 
         optim.step()
 
