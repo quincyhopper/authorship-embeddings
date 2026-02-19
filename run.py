@@ -45,8 +45,9 @@ if __name__ == "__main__":
     # Init Lightning Trainer
     trainer = L.Trainer(
         max_epochs=MAX_EPOCHS,
-        accelerator="auto",
-        devices=1,
+        accelerator="gpu",
+        devices=4,
+        strategy='ddp',
         precision="16-mixed",
         callbacks=[checkpoint_callback, early_stopping_callback],
         logger=True,
