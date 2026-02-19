@@ -1,6 +1,7 @@
 import pandas as pd
 import lightning as L
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
+from lightning.pytorch.loggers import WandbLogger
 from transformers import AutoTokenizer
 from trainer import ContrastiveTrainer
 from data_builder import AuthorshipDataModule
@@ -42,6 +43,11 @@ if __name__ == "__main__":
         mode='min'
     )
 
+    # Define logger
+    wandb_logger = WandbLogger(
+        project="authorship-embeddings"
+    )
+
     # Init Lightning Trainer
     trainer = L.Trainer(
         max_epochs=MAX_EPOCHS,
@@ -50,7 +56,7 @@ if __name__ == "__main__":
         strategy='ddp',
         precision="16-mixed",
         callbacks=[checkpoint_callback, early_stopping_callback],
-        logger=True,
+        logger=wandb_logger,
         log_every_n_steps=1,
         val_check_interval=0.5
     )
