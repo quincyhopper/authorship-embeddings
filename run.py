@@ -5,13 +5,13 @@ from transformers import AutoTokenizer
 from trainer import ContrastiveTrainer
 from data_builder import AuthorshipDataModule
 
-MODEL_CODE = 'prajjwal1/bert-tiny'
+MODEL_CODE = 'roberta-large'
 DATA_PATH = 'data/blogtext_16.csv'
-MAX_EPOCHS = 3
-GLOBAL_BATCH_SIZE = 32
-VIEW_SIZE = 3
-MAX_SEQ_LEN = 32
-MINIBATCH_SIZE = 8
+MAX_EPOCHS = 20
+GLOBAL_BATCH_SIZE = 256
+VIEW_SIZE = 8
+MAX_SEQ_LEN = 512
+MINIBATCH_SIZE = 32
 
 if __name__ == "__main__":
 
