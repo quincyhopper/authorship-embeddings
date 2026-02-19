@@ -22,7 +22,7 @@ if __name__ == "__main__":
 
     # Init Data and Model
     tokenizer = AutoTokenizer.from_pretrained(MODEL_CODE)
-    model = ContrastiveTrainer(MODEL_CODE, minibatch_size=MINIBATCH_SIZE, epochs=MAX_EPOCHS)
+    model = ContrastiveTrainer(MODEL_CODE, lr=1e-5, epochs=MAX_EPOCHS, minibatch_size=MINIBATCH_SIZE)
 
     data_module = AuthorshipDataModule(df, tokenizer=tokenizer, 
                                        batch_size=GLOBAL_BATCH_SIZE, 
@@ -40,7 +40,7 @@ if __name__ == "__main__":
     # Init early stoppping
     early_stopping_callback = EarlyStopping(
         monitor='val_loss',
-        patience=3,
+        patience=10,
         verbose=True,
         mode='min'
     )
@@ -60,7 +60,7 @@ if __name__ == "__main__":
         callbacks=[checkpoint_callback, early_stopping_callback],
         logger=wandb_logger,
         log_every_n_steps=1,
-        val_check_interval=0.5
+        val_check_interval=1
     )
 
     # 3. Train
