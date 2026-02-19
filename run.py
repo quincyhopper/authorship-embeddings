@@ -55,7 +55,7 @@ if __name__ == "__main__":
         max_epochs=MAX_EPOCHS,
         accelerator="gpu",
         devices=4,
-        strategy='ddp',
+        strategy='ddp_find_unused_parameters_true',
         precision="16-mixed",
         callbacks=[checkpoint_callback, early_stopping_callback],
         logger=wandb_logger,
