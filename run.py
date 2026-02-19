@@ -54,7 +54,7 @@ if __name__ == "__main__":
     trainer = L.Trainer(
         max_epochs=MAX_EPOCHS,
         accelerator="gpu",
-        devices=1,
+        devices=4,
         strategy='ddp',
         precision="16-mixed",
         callbacks=[checkpoint_callback, early_stopping_callback],
