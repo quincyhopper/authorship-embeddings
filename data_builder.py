@@ -85,7 +85,7 @@ class AuthorshipDataModule(L.LightningDataModule):
             batch_size=self.batch_size,
             shuffle=True,
             collate_fn=collator,
-            num_workers=2,
+            num_workers=1,
             drop_last=True
         )
     
