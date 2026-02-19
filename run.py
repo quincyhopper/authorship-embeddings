@@ -1,10 +1,12 @@
 import pandas as pd
+import torch
 import lightning as L
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
 from transformers import AutoTokenizer
 from trainer import ContrastiveTrainer
 from data_builder import AuthorshipDataModule
+torch.set_float32_matmul_precision('medium')
 
 MODEL_CODE = 'roberta-large'
 DATA_PATH = 'data/blogtext_16.csv'
