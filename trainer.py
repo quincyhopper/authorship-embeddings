@@ -61,7 +61,7 @@ class ContrastiveTrainer(L.LightningModule):
             is_last_minibatch = (j == len(minibatch_input_ids) - 1)
 
             if not is_last_minibatch:
-                with self.model.no_sync(self.model):
+                with self.no_sync(self.model):
                     loss = self.loss_func(rep_views, labels)
                     self.manual_backward(loss)
             else:
