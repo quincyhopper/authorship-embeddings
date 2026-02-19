@@ -22,7 +22,7 @@ if __name__ == "__main__":
 
     # Init Data and Model
     tokenizer = AutoTokenizer.from_pretrained(MODEL_CODE)
-    model = ContrastiveTrainer(MODEL_CODE, minibatch_size=MINIBATCH_SIZE)
+    model = ContrastiveTrainer(MODEL_CODE, minibatch_size=MINIBATCH_SIZE, epochs=MAX_EPOCHS)
 
     data_module = AuthorshipDataModule(df, tokenizer=tokenizer, 
                                        batch_size=GLOBAL_BATCH_SIZE, 
