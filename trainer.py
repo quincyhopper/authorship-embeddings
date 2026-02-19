@@ -4,7 +4,7 @@ from model import ModelWrapper
 from loss import SupConLoss
 
 class ContrastiveTrainer(L.LightningModule):
-    def __init__(self, model_code, lr=1e-4, epochs=1, minibatch_size=8):
+    def __init__(self, model_code, lr=1e-5, epochs=1, minibatch_size=8):
         super().__init__()
 
         self.save_hyperparameters()
@@ -61,7 +61,7 @@ class ContrastiveTrainer(L.LightningModule):
             is_last_minibatch = (j == len(minibatch_input_ids) - 1)
 
             if not is_last_minibatch:
-                with self.trainer.strategy.no_sync(self.model):
+                with self.model.no_sync(self.model):
                     loss = self.loss_func(rep_views, labels)
                     self.manual_backward(loss)
             else:
