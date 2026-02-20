@@ -9,8 +9,8 @@ from data_builder import AuthorshipDataModule
 torch.set_float32_matmul_precision('medium')
 
 MODEL_CODE = 'roberta-large'
-DATA_PATH = 'data/blogtext_16.csv'
-MAX_EPOCHS = 20
+DATA_PATH = 'data/blogtext_16.parquet'
+MAX_EPOCHS = 1
 GLOBAL_BATCH_SIZE = 1024
 VIEW_SIZE = 16
 MAX_SEQ_LEN = 512
@@ -47,7 +47,7 @@ if __name__ == "__main__":
     tokenizer = AutoTokenizer.from_pretrained(MODEL_CODE)
     
     # Init data loaders
-    data_module = AuthorshipDataModule(df, 
+    data_module = AuthorshipDataModule(data_path=DATA_PATH, 
                                        tokenizer=tokenizer, 
                                        batch_size=GLOBAL_BATCH_SIZE, 
                                        view_size=VIEW_SIZE,
