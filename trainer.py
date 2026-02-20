@@ -1,5 +1,6 @@
 import torch
 import lightning as L
+from math import ceil
 from model import ModelWrapper
 from loss import SupConLoss
 
@@ -34,7 +35,7 @@ class ContrastiveTrainer(L.LightningModule):
         flat_mask = attention_mask.view(-1, seq_len)
 
         # Chunk batch into minibatches
-        n = (batch_size * view_size // self.hparams.minibatch_size) # Calculate number of minibatches
+        n = int(ceil((batch_size * view_size) / self.hparams.minibatch_size)) # Calculate number of minibatches
         minibatch_input_ids = torch.chunk(flat_ids, chunks=n)
         minibatch_attention_mask = torch.chunk(flat_mask, chunks=n)
 
@@ -77,7 +78,7 @@ class ContrastiveTrainer(L.LightningModule):
         flat_mask = attention_mask.view(-1, seq_len)
 
         # Chunk batch into minibatches
-        n = (batch_size * view_size // self.hparams.minibatch_size) # Calculate number of minibatches
+        n = int(ceil((batch_size * view_size) / self.hparams.minibatch_size)) # Calculate number of minibatches
         minibatch_input_ids = torch.chunk(flat_ids, chunks=n)
         minibatch_attention_mask = torch.chunk(flat_mask, chunks=n)
 
