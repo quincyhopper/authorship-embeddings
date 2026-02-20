@@ -56,36 +56,41 @@ class ContrastiveTrainer(L.LightningModule):
         flat_mask = attention_mask.view(-1, seq_len)
 
         # Chunk batch into minibatches
-        n = int(ceil((batch_size * view_size) / self.hparams.minibatch_size)) # Calculate number of minibatches
-        minibatch_input_ids = torch.chunk(flat_ids, chunks=n)
-        minibatch_attention_mask = torch.chunk(flat_mask, chunks=n)
+        minibatch_input_ids = torch.split(flat_ids, self.hparams.minibatch_size)
+        minibatch_attention_mask = torch.chunk(flat_mask, self.hparams.minibatch_size)
 
         # 1. Compute embeddings for entire batch (no activations or gradients)
         with torch.no_grad():
             anchors = torch.vstack([self.model(id, mask) for id, mask in zip(minibatch_input_ids, minibatch_attention_mask)])
 
         # 2. Re-compute embeddings for minibatch, computing loss and gradients
-        for j, (id, mask) in enumerate(zip(minibatch_input_ids, minibatch_attention_mask)):
+        start = 0
+        for id, mask in zip(minibatch_input_ids, minibatch_attention_mask):
             
             # Make a copy of the current batch embeddings
             rep = anchors.clone()
 
-            # Determine indices of current batch
-            start = j * self.hparams.minibatch_size
-            end = (j+1) * self.hparams.minibatch_size
+            # Calculate size of current chunk and get minibatch indices
+            current_chunk_size = id.shape[0]
+            end = start + current_chunk_size
 
             # Replace frozen embedding with fresh embeddings for this chunk
             rep[start:end] = self.model(id, mask)
 
+            # Advance pointer for next iteration
+            start = end
+
             # Reshape back to 3D tensor: [B, V, D]
             rep_views = rep.view(batch_size, view_size, -1)
             
+            # Calculate loss and compute gradients
             loss = self.loss_func(rep_views, labels)
             self.manual_backward(loss)
 
         with torch.no_grad():
             self.log('train_loss', loss, prog_bar=True, sync_dist=True)
 
+        # Update parameters
         optim.step()
         optim.zero_grad()
         sch.step()
@@ -100,9 +105,8 @@ class ContrastiveTrainer(L.LightningModule):
         flat_mask = attention_mask.view(-1, seq_len)
 
         # Chunk batch into minibatches
-        n = int(ceil((batch_size * view_size) / self.hparams.minibatch_size)) # Calculate number of minibatches
-        minibatch_input_ids = torch.chunk(flat_ids, chunks=n)
-        minibatch_attention_mask = torch.chunk(flat_mask, chunks=n)
+        minibatch_input_ids = torch.split(flat_ids, self.hparams.minibatch_size)
+        minibatch_attention_mask = torch.chunk(flat_mask, self.hparams.minibatch_size)
 
         # Compute embeddings
         anchors = torch.vstack([self.model(id, mask) for id, mask in zip(minibatch_input_ids, minibatch_attention_mask)])
