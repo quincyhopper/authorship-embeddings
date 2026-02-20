@@ -10,7 +10,8 @@ class AuthorshipDataset(Dataset):
         self.dataset = dataset
         self.view_size = view_size
 
-        df_idxs = dataset.to_pandas().reset_index()
+        # Only select author IDs to save memory
+        df_idxs = dataset.select_columns(['authors']).to_pandas().reset_index()
         self.grouped_idxs = df_idxs.groupby('author')['index'].apply(list).to_dict()
 
         # Create list of author IDs
@@ -91,11 +92,5 @@ class AuthorshipDataModule(L.LightningDataModule):
         dataset = AuthorshipDataset(self.val_ds, self.view_size)
         collator = AuthorshipCollator(self.tokenizer, self.view_size, self.max_seq_len)
 
-        return DataLoader(
-            dataset,
-            batch_size=self.batch_size,
-            shuffle=False,
-            collate_fn=collator,
-            num_workers=2,
-            drop_last=True
-        )
+        return DataLoader(dataset, batch_size=self.batch_size, shuffle=False,
+                          collate_fn=collator, num_workers=2, drop_last=True)
