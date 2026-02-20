@@ -11,7 +11,7 @@ class AuthorshipDataset(Dataset):
         self.view_size = view_size
 
         # Only select author IDs to save memory
-        df_idxs = dataset.select_columns(['authors']).to_pandas().reset_index()
+        df_idxs = dataset.select_columns(['author']).to_pandas().reset_index()
         self.grouped_idxs = df_idxs.groupby('author')['index'].apply(list).to_dict()
 
         # Create list of author IDs
