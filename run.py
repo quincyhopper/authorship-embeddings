@@ -57,8 +57,8 @@ if __name__ == "__main__":
     trainer = L.Trainer(
         max_epochs=MAX_EPOCHS,
         accelerator="gpu",
-        devices=1,
-        strategy='auto',
+        devices=4,
+        strategy='ddp_find_unused_parameters_true',
         precision="16-mixed",
         callbacks=[checkpoint_callback, early_stopping_callback],
         logger=wandb_logger,
