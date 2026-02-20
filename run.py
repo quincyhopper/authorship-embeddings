@@ -11,24 +11,14 @@ torch.set_float32_matmul_precision('medium')
 MODEL_CODE = 'roberta-large'
 DATA_PATH = 'data/blogtext_16.csv'
 MAX_EPOCHS = 20
-GLOBAL_BATCH_SIZE = 256
-VIEW_SIZE = 8
+GLOBAL_BATCH_SIZE = 1024
+VIEW_SIZE = 16
 MAX_SEQ_LEN = 512
-MINIBATCH_SIZE = 64
+MINIBATCH_SIZE = 32
 
 if __name__ == "__main__":
 
-    df = pd.read_csv(DATA_PATH)
-
-    # Init Data and Model
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_CODE)
-    model = ContrastiveTrainer(MODEL_CODE, lr=1e-5, epochs=MAX_EPOCHS, minibatch_size=MINIBATCH_SIZE)
-
-    data_module = AuthorshipDataModule(df, tokenizer=tokenizer, 
-                                       batch_size=GLOBAL_BATCH_SIZE, 
-                                       view_size=VIEW_SIZE,
-                                       max_seq_len=MAX_SEQ_LEN)
-
+    # Init model checkpoint
     checkpoint_callback = ModelCheckpoint(
         monitor="val_loss",
         dirpath="checkpoints/",
@@ -45,10 +35,23 @@ if __name__ == "__main__":
         mode='min'
     )
 
-    # Define logger
+    # Init logger
     wandb_logger = WandbLogger(
         project="authorship-embeddings"
     )
+
+    # Read data
+    df = pd.read_csv(DATA_PATH)
+
+    # Init tokenizer and model
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_CODE)
+    
+    # Init data loaders
+    data_module = AuthorshipDataModule(df, 
+                                       tokenizer=tokenizer, 
+                                       batch_size=GLOBAL_BATCH_SIZE, 
+                                       view_size=VIEW_SIZE,
+                                       max_seq_len=MAX_SEQ_LEN)
 
     # Init Lightning Trainer
     trainer = L.Trainer(
@@ -62,6 +65,14 @@ if __name__ == "__main__":
         log_every_n_steps=1,
         val_check_interval=1.0
     )
+
+    # Init trainer
+    model = ContrastiveTrainer(MODEL_CODE, 
+                               lr=1e-5, 
+                               epochs=MAX_EPOCHS, 
+                               minibatch_size=MINIBATCH_SIZE,
+                               weight_decay=0.01,
+                               )
 
     # 3. Train
     trainer.fit(model, data_module)
