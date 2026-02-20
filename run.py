@@ -9,7 +9,7 @@ torch.set_float32_matmul_precision('medium')
 
 MODEL_CODE = 'roberta-large'
 DATA_PATH = 'data/blogtext_16.parquet'
-MAX_EPOCHS = 1
+MAX_EPOCHS = 2
 GLOBAL_BATCH_SIZE = 1024
 VIEW_SIZE = 16
 MAX_SEQ_LEN = 512
