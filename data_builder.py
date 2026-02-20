@@ -1,35 +1,35 @@
 import torch
-import pandas as pd
 import random
+from datasets import load_dataset
 import lightning as L
-from sklearn.model_selection import train_test_split
 from torch.utils.data import Dataset, DataLoader
 
 class AuthorshipDataset(Dataset):
-    def __init__(self, df: pd.DataFrame, view_size: int):
+    def __init__(self, dataset, view_size: int):
 
+        self.dataset = dataset
         self.view_size = view_size
 
-        # Group by authors -> {author_id: [text1, text2, ...]}
-        self.grouped_data = df.groupby('author')['text'].apply(list).to_dict()
+        df_idxs = dataset.to_pandas().reset_index()
+        self.grouped_idxs = df_idxs.groupby('author')['index'].apply(list).to_dict()
 
         # Create list of author IDs
-        self.author_ids = list(self.grouped_data.keys())
+        self.author_ids = list(self.grouped_idxs.keys())
 
     def __len__(self):
         return len(self.author_ids)
     
     def __getitem__(self, index):
         author_id = self.author_ids[index]
-        all_texts = self.grouped_data[author_id] # List
+        row_idxs = self.grouped_idxs[author_id]
         
-        # Select V texts from author
-        samples = random.choices(all_texts, k=self.view_size)
+        # Sample row indices
+        sampled_idxs = random.choices(row_idxs, k=self.view_size)
 
-        return {
-            "label": index,    # List index is unique integer ID
-            "texts": samples # List of V strings
-        }
+        # Fetch actual text data
+        samples = [self.dataset[int(i)]['text'] for i in sampled_idxs]
+
+        return {"label": index, "texts": samples}
     
 class AuthorshipCollator:
     def __init__(self, tokenizer, view_size, max_len=512):
@@ -63,34 +63,32 @@ class AuthorshipCollator:
         return input_ids, attention_mask, labels
     
 class AuthorshipDataModule(L.LightningDataModule):
-    def __init__(self, df, tokenizer, batch_size=256, view_size=3, max_seq_len=512):
+    def __init__(self, data_path, tokenizer, batch_size=256, view_size=3, max_seq_len=512):
         super().__init__()
-        self.df = df
+        self.data_path = data_path
         self.tokenizer = tokenizer
         self.batch_size = batch_size
         self.view_size = view_size
         self.max_seq_len = max_seq_len
 
     def setup(self, stage=None):
-        self.train_df, self.val_df = train_test_split(
-            self.df, train_size=0.8, stratify=self.df['author']
-        )
+
+        # Load parquet file
+        data = load_dataset(path='parquet', data_files=self.data_path, split='train')
+
+        split = data.train_test_split(test_size=0.2, train_size=0.8)
+        self.train_ds = split['train']
+        self.val_ds = split['test']
 
     def train_dataloader(self):
-        dataset = AuthorshipDataset(self.train_df, self.view_size)
+        dataset = AuthorshipDataset(self.train_ds, self.view_size)
         collator = AuthorshipCollator(self.tokenizer, self.view_size, self.max_seq_len)
 
-        return DataLoader(
-            dataset,
-            batch_size=self.batch_size,
-            shuffle=True,
-            collate_fn=collator,
-            num_workers=1,
-            drop_last=True
-        )
+        return DataLoader(dataset, batch_size=self.batch_size, shuffle=True,
+                          collate_fn=collator, num_workers=1, drop_last=True)
     
     def val_dataloader(self):
-        dataset = AuthorshipDataset(self.val_df, self.view_size)
+        dataset = AuthorshipDataset(self.val_ds, self.view_size)
         collator = AuthorshipCollator(self.tokenizer, self.view_size, self.max_seq_len)
 
         return DataLoader(
