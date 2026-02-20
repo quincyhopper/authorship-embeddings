@@ -57,17 +57,9 @@ class ContrastiveTrainer(L.LightningModule):
 
             # Reshape back to 3D tensor: [B, V, D]
             rep_views = rep.view(batch_size, view_size, -1)
-
-            is_last_minibatch = (j == len(minibatch_input_ids) - 1)
-
-            if not is_last_minibatch:
-                with self.no_sync(self.model):
-                    loss = self.loss_func(rep_views, labels)
-                    self.manual_backward(loss)
-            else:
-                loss = self.loss_func(rep_views, labels)
-                self.manual_backward(loss)
-
+            
+            loss = self.loss_func(rep_views, labels)
+            self.manual_backward(loss)
 
         with torch.no_grad():
             self.log('train_loss', loss, prog_bar=True, sync_dist=True)
