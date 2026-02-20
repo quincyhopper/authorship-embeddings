@@ -60,7 +60,7 @@ if __name__ == "__main__":
         callbacks=[checkpoint_callback, early_stopping_callback],
         logger=wandb_logger,
         log_every_n_steps=1,
-        val_check_interval=1
+        val_check_interval=1.0
     )
 
     # 3. Train
