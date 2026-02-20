@@ -40,9 +40,6 @@ if __name__ == "__main__":
         project="authorship-embeddings"
     )
 
-    # Read data
-    df = pd.read_csv(DATA_PATH)
-
     # Init tokenizer and model
     tokenizer = AutoTokenizer.from_pretrained(MODEL_CODE)
     
