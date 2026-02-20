@@ -40,7 +40,7 @@ class ContrastiveTrainer(L.LightningModule):
             optimizer=optimizer,
             num_warmup_steps=warmup_steps,
             num_training_steps=total_steps
-        )
+            )
 
         return [optimizer], [scheduler]
 
@@ -67,33 +67,29 @@ class ContrastiveTrainer(L.LightningModule):
         start = 0
         for id, mask in zip(minibatch_input_ids, minibatch_attention_mask):
             
-            # Make a copy of the current batch embeddings
-            rep = anchors.clone()
+            # Compute loss and gradients for minibatch
+            loss = self._process_minibatch(id, mask, anchors, start, batch_size, view_size, labels)
 
-            # Calculate size of current chunk and get minibatch indices
-            current_chunk_size = id.shape[0]
-            end = start + current_chunk_size
+            # Increment start for next iteration
+            start += id.shape[0]
 
-            # Replace frozen embedding with fresh embeddings for this chunk
-            rep[start:end] = self.model(id, mask)
-
-            # Advance pointer for next iteration
-            start = end
-
-            # Reshape back to 3D tensor: [B, V, D]
-            rep_views = rep.view(batch_size, view_size, -1)
-            
-            # Calculate loss and compute gradients
-            loss = self.loss_func(rep_views, labels)
-            self.manual_backward(loss)
-
-        with torch.no_grad():
-            self.log('train_loss', loss, prog_bar=True, sync_dist=True)
+        # Log the training loss for WandB
+        self.log('train_loss', loss, prog_bar=True, sync_dist=True) # sync_dist to average loss across all GPUs
 
         # Update parameters
         optim.step()
         optim.zero_grad()
         sch.step()
+
+    def _process_minibatch(self, id, mask, anchors, start, batch_size, view_size, labels):
+        rep = anchors.clone()                           # Make copy of current batch embeddings
+        end = start + id.shape[0]                       # Calculte minibatch indices
+        rep[start:end] = self.model(id, mask)           # Replace frozen embedding with fresh embeddings for this chunk
+        rep_views = rep.view(batch_size, view_size, -1) # Reshape back to 3D tensor: [B, V, D]
+        loss = self.loss_func(rep_views, labels)        # Compute loss
+        self.manual_backward(loss)                      # Compute gradients
+
+        return loss.detach()
 
     def validation_step(self, batch, batch_idx):
 
