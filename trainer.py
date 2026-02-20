@@ -57,7 +57,7 @@ class ContrastiveTrainer(L.LightningModule):
 
         # Chunk batch into minibatches
         minibatch_input_ids = torch.split(flat_ids, self.hparams.minibatch_size)
-        minibatch_attention_mask = torch.chunk(flat_mask, self.hparams.minibatch_size)
+        minibatch_attention_mask = torch.split(flat_mask, self.hparams.minibatch_size)
 
         # 1. Compute embeddings for entire batch (no activations or gradients)
         with torch.no_grad():
@@ -106,7 +106,7 @@ class ContrastiveTrainer(L.LightningModule):
 
         # Chunk batch into minibatches
         minibatch_input_ids = torch.split(flat_ids, self.hparams.minibatch_size)
-        minibatch_attention_mask = torch.chunk(flat_mask, self.hparams.minibatch_size)
+        minibatch_attention_mask = torch.split(flat_mask, self.hparams.minibatch_size)
 
         # Compute embeddings
         anchors = torch.vstack([self.model(id, mask) for id, mask in zip(minibatch_input_ids, minibatch_attention_mask)])
