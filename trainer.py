@@ -3,29 +3,50 @@ import lightning as L
 from math import ceil
 from model import ModelWrapper
 from loss import SupConLoss
+from transformers import get_cosine_schedule_with_warmup
 
 class ContrastiveTrainer(L.LightningModule):
-    def __init__(self, model_code, lr=1e-5, epochs=1, minibatch_size=8):
+    def __init__(self, 
+                 model_code, 
+                 lr=1e-5, 
+                 epochs=1, 
+                 minibatch_size=8,
+                 weight_decay=0.01):
         super().__init__()
 
-        self.save_hyperparameters()
         self.model = ModelWrapper(model_code)
-        self.loss_func = SupConLoss()
+        self.lr = lr
+        self.epochs = epochs
+        self.minibatch_size = minibatch_size
+        self.weight_decay = weight_decay
+        self.loss_func = SupConLoss(temperature=.07)
+        self.save_hyperparameters()
 
         self.automatic_optimization = False
 
     def configure_optimizers(self):
-        optimizer = torch.optim.AdamW(self.parameters(), lr=self.hparams.lr)
 
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-            optimizer, T_max=self.hparams.epochs, eta_min=1e-6
-            )
+        # Init optimiser
+        optimizer = torch.optim.AdamW(self.parameters(), 
+                                      lr=self.hparams.lr,
+                                      weight_decay=self.hparams.weight_decay
+                                      )
+        
+        # Define total steps and warmup steps
+        total_steps = self.trainer.estimated_stepping_batches
+        warmup_steps = int(total_steps * 0.1) # 10% of training is warmup
+
+        scheduler = get_cosine_schedule_with_warmup(
+            optimizer=optimizer,
+            num_warmup_steps=warmup_steps,
+            num_training_steps=total_steps
+        )
 
         return [optimizer], [scheduler]
 
     def training_step(self, batch, batch_idx):
-
         optim = self.optimizers()
+        sch = self.lr_schedulers()
 
         input_ids, attention_mask, labels = batch
         batch_size, view_size, seq_len = input_ids.shape
@@ -67,6 +88,7 @@ class ContrastiveTrainer(L.LightningModule):
 
         optim.step()
         optim.zero_grad()
+        sch.step()
 
     def validation_step(self, batch, batch_idx):
 
