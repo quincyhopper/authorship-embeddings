@@ -1,4 +1,3 @@
-import pandas as pd
 import torch
 import lightning as L
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
