@@ -68,9 +68,10 @@ class ContrastiveTrainer(L.LightningModule):
         for j, (id, mask) in enumerate(zip(minibatch_input_ids, minibatch_attention_mask)):
             is_last_minibatch = (j == len(minibatch_input_ids) - 1)
 
+            # Compute loss and gradients for minibatch
+            # Only sync across GPUs after the last minibatch
             if not is_last_minibatch:
                 with self.trainer.strategy.block_backward_sync():
-                    # Compute loss and gradients for minibatch
                     loss = self._process_minibatch(id, mask, anchors, start, batch_size, view_size, labels)
             else:
                 loss = self._process_minibatch(id, mask, anchors, start, batch_size, view_size, labels)
