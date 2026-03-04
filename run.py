@@ -2,18 +2,22 @@ import torch
 import lightning as L
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger
-from transformers import AutoTokenizer
 from trainer import ContrastiveTrainer
 from data_builder import AuthorshipDataModule
 torch.set_float32_matmul_precision('medium')
 
 MODEL_CODE = 'roberta-large'
-DATA_PATH = 'data/blogtext_16.parquet'
-MAX_EPOCHS = 2
+MAX_EPOCHS = 1
 GLOBAL_BATCH_SIZE = 1024
 VIEW_SIZE = 16
 MAX_SEQ_LEN = 512
 MINIBATCH_SIZE = 48
+DATA_PATH = [
+    'data/blogtext_chunked.parquet',
+    'data/reddit_chunked.parquet',
+    #'data/twitter_train_chunked.parquet',
+    #'data/gutenberg_chunked.parquet'
+    ]
 
 if __name__ == "__main__":
 
@@ -38,13 +42,9 @@ if __name__ == "__main__":
     wandb_logger = WandbLogger(
         project="authorship-embeddings"
     )
-
-    # Init tokenizer and model
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_CODE)
     
     # Init data loaders
     data_module = AuthorshipDataModule(data_path=DATA_PATH, 
-                                       tokenizer=tokenizer, 
                                        batch_size=GLOBAL_BATCH_SIZE, 
                                        view_size=VIEW_SIZE,
                                        max_seq_len=MAX_SEQ_LEN)
