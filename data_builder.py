@@ -82,7 +82,7 @@ class AuthorshipDataModule(L.LightningDataModule):
     def _calculate_weights(self, dataset):
         
         # Count the number of datasets and total samples
-        sources = dataset['sources']
+        sources = dataset['source']
         source_counts = Counter(sources)
         total_samples = len(sources)
 
