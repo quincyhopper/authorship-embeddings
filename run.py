@@ -8,7 +8,7 @@ torch.set_float32_matmul_precision('medium')
 
 MODEL_CODE = 'roberta-large'
 MAX_EPOCHS = 1
-GLOBAL_BATCH_SIZE = 256
+GLOBAL_BATCH_SIZE = 1024
 VIEW_SIZE = 16
 MAX_SEQ_LEN = 512
 MINIBATCH_SIZE = 48

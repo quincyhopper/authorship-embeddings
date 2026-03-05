@@ -104,7 +104,7 @@ class AuthorshipDataModule(L.LightningDataModule):
     def train_dataloader(self):
         sampler = WeightedRandomSampler(self.weights, num_samples=len(self.weights), replacement=True)
         return DataLoader(
-            self.train_dataset, 
+            self.train_ds, 
             batch_size=self.batch_size, 
             sampler=sampler,
             collate_fn=AuthorshipCollator(), 
@@ -114,7 +114,7 @@ class AuthorshipDataModule(L.LightningDataModule):
     
     def val_dataloader(self):
         return DataLoader(
-            self.val_dataset, 
+            self.val_ds, 
             batch_size=self.batch_size, 
             shuffle=False,
             collate_fn=AuthorshipCollator(), 
