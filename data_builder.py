@@ -73,8 +73,8 @@ class AuthorshipDataModule(L.LightningDataModule):
         self.val_ds_raw = split_ds['test']
         
         # Wrap AuthorshipDataset class
-        self.train_dataset = AuthorshipDataset(self.train_ds_raw)
-        self.val_dataset = AuthorshipDataset(self.val_ds_raw)
+        self.train_dataset = AuthorshipDataset(self.train_ds_raw, self.view_size)
+        self.val_dataset = AuthorshipDataset(self.val_ds_raw, self.view_size)
 
         # Calculate weights for 1/14 batch requirement
         self.weights = self._calculate_weights(self.train_ds_raw)
