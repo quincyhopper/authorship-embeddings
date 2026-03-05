@@ -1,22 +1,21 @@
 import torch
 import random
 import lightning as L
-from collections import Counter
+from collections import Counter, defaultdict
 from datasets import load_dataset
 from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
 
 class AuthorshipDataset(Dataset):
-    def __init__(self, dataset, view_size: int):
+    def __init__(self, dataset, view_size: int, author_list: list):
 
         self.dataset = dataset
         self.view_size = view_size
+        self.author_ids = author_list
 
         # Only select author IDs to save memory
-        df_idxs = dataset.select_columns(['author']).to_pandas().reset_index()
-        self.grouped_idxs = df_idxs.groupby('author')['index'].apply(list).to_dict()
-
-        # Create list of author IDs
-        self.author_ids = list(self.grouped_idxs.keys())
+        self.grouped_idxs = defaultdict(list)
+        for idx, author in enumerate(dataset['author']):
+            self.grouped_idxs[author].append(idx)
 
     def __len__(self):
         """Used by DataLoader to know the indices to sample from."""
@@ -58,50 +57,58 @@ class AuthorshipDataModule(L.LightningDataModule):
         self.num_workers = num_workers
 
     def setup(self, stage=None):
-
-        # Load dataset
+        # Load all datasets
         full_ds = load_dataset(path='parquet', data_files=self.data_path, split='train')
 
         # Filter authors with less than 16 chunks
         author_counts = Counter(full_ds['author'])
-        valid_authors = {auth for auth, count in author_counts.items() if count >= 16}
-        filtered_ds = full_ds.filter(lambda x: x['author'] in valid_authors)
+        valid_authors = [auth for auth, count in author_counts.items() if count >= 16] # List so we can shuffle below
 
         # Create train/val split
-        split_ds = filtered_ds.train_test_split(test_size=0.2, seed=42)
-        self.train_ds_raw = split_ds['train']
-        self.val_ds_raw = split_ds['test']
-        
-        # Wrap AuthorshipDataset class
-        self.train_dataset = AuthorshipDataset(self.train_ds_raw, self.view_size)
-        self.val_dataset = AuthorshipDataset(self.val_ds_raw, self.view_size)
+        # Splitting by authors, not by chunks. This ensures that we never test on an author we train on
+        random.seed(42)
+        random.shuffle(valid_authors)
+        split_idx = int(len(valid_authors) * 0.8)
+        train_author_list = valid_authors[:split_idx]
+        val_author_list = valid_authors[split_idx:]
+        train_set = set(train_author_list)
+        val_set = set(val_author_list)
+        self.train_ds_raw = full_ds.filter(lambda x: x['author'] in train_set, num_proc=10)
+        self.val_ds_raw = full_ds.filter(lambda x: x['author'] in val_set, num_proc=10)
+        self.train_dataset = AuthorshipDataset(self.train_ds_raw, self.view_size, train_author_list)
+        self.val_dataset = AuthorshipDataset(self.val_ds_raw, self.view_size, val_author_list)
 
         # Calculate weights for 1/14 batch requirement
-        self.weights = self._calculate_weights(self.train_ds_raw)
+        self.weights = self._calculate_weights(self.train_ds_raw, train_author_list)
 
-    def _calculate_weights(self, dataset):
+    def _calculate_weights(self, dataset, author_list):
+        """Calculate the weight to upsample the smaller datasets. Replicating the 1/14 minimum."""
+
+        # Map each author to their source dataset {author: source}
+        author_source_map = {}
+        for row in dataset.select_columns(['author', 'source']):
+            if row['author'] not in author_source_map:
+                author_source_map[row['author']] = row['source']
         
-        # Count the number of datasets and total samples
-        sources = dataset['source']
-        source_counts = Counter(sources)
-        total_samples = len(sources)
+        # Among the unique authors, count the number of times each source appears
+        author_sources = [author_source_map[auth] for auth in author_list]
+        source_counts = Counter(author_sources)
+        total_authors = len(author_sources)
 
         # Each source gets AT LEAST 1/14 
         target_min_prob = 1/14
+        source_weight_map = {}
 
-        # Map source to weight
-        source_to_weight = {}
         for s, count in source_counts.items():
-            default_prob = count / total_samples
-            upsampled_prob = max(default_prob, target_min_prob)
-            source_to_weight[s] = upsampled_prob / count
+            default_prob = count / total_authors
+            prob = max(default_prob, target_min_prob) # Weight is AT LEAST 1/14
+            source_weight_map[s] = prob / count
 
-        weights = [source_to_weight[s] for s in sources]
-
+        # Generate one weight per author based on their source
+        weights = [source_weight_map[author_source_map[auth]] for auth in author_list]
         return torch.DoubleTensor(weights)
 
     def train_dataloader(self):
-
         sampler = WeightedRandomSampler(self.weights, num_samples=len(self.weights), replacement=True)
         return DataLoader(
             self.train_dataset, 
@@ -113,7 +120,6 @@ class AuthorshipDataModule(L.LightningDataModule):
             )
     
     def val_dataloader(self):
-
         return DataLoader(
             self.val_dataset, 
             batch_size=self.batch_size, 

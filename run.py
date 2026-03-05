@@ -47,7 +47,9 @@ if __name__ == "__main__":
     data_module = AuthorshipDataModule(data_path=DATA_PATH, 
                                        batch_size=GLOBAL_BATCH_SIZE, 
                                        view_size=VIEW_SIZE,
-                                       max_seq_len=MAX_SEQ_LEN)
+                                       max_seq_len=MAX_SEQ_LEN,
+                                       num_workers=4
+                                       )
 
     # Init Lightning Trainer
     trainer = L.Trainer(
