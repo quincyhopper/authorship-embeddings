@@ -8,7 +8,7 @@ torch.set_float32_matmul_precision('medium')
 
 MODEL_CODE = 'roberta-large'
 MAX_EPOCHS = 1
-GLOBAL_BATCH_SIZE = 1024
+GLOBAL_BATCH_SIZE = 256
 VIEW_SIZE = 16
 MAX_SEQ_LEN = 512
 MINIBATCH_SIZE = 48
@@ -48,7 +48,7 @@ if __name__ == "__main__":
                                        batch_size=GLOBAL_BATCH_SIZE, 
                                        view_size=VIEW_SIZE,
                                        max_seq_len=MAX_SEQ_LEN,
-                                       num_workers=4
+                                       num_workers=1
                                        )
 
     # Init Lightning Trainer
