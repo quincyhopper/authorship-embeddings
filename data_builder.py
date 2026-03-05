@@ -63,7 +63,7 @@ class AuthorshipDataModule(L.LightningDataModule):
         full_ds = load_dataset(path='parquet', data_files=self.data_path, split='train')
 
         # Filter authors with less than 16 chunks
-        author_counts = Counter(filtered_ds['author'])
+        author_counts = Counter(full_ds['author'])
         valid_authors = {auth for auth, count in author_counts.items() if count >= 16}
         filtered_ds = full_ds.filter(lambda x: x['author'] in valid_authors)
 
