@@ -12,12 +12,6 @@ GLOBAL_BATCH_SIZE = 256
 VIEW_SIZE = 16
 MAX_SEQ_LEN = 512
 MINIBATCH_SIZE = 48
-DATA_PATH = [
-    'data/blogtext_chunked.parquet',
-    'data/reddit_chunked.parquet',
-    #'data/twitter_train_chunked.parquet',
-    #'data/gutenberg_chunked.parquet'
-    ]
 
 if __name__ == "__main__":
 
@@ -44,7 +38,8 @@ if __name__ == "__main__":
     )
     
     # Init data loaders
-    data_module = AuthorshipDataModule(data_path=DATA_PATH, 
+    data_module = AuthorshipDataModule(train_path='data/train_chunks.parquet',
+                                       val_path='data/val_chunks.parquet', 
                                        batch_size=GLOBAL_BATCH_SIZE, 
                                        view_size=VIEW_SIZE,
                                        max_seq_len=MAX_SEQ_LEN,

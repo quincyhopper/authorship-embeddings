@@ -48,38 +48,31 @@ class AuthorshipCollator:
         return input_ids, attention_mask, labels
     
 class AuthorshipDataModule(L.LightningDataModule):
-    def __init__(self, data_path, batch_size=1024, view_size=16, max_seq_len=512, num_workers=1):
+    def __init__(self, train_path, val_path, batch_size=1024, view_size=16, max_seq_len=512, num_workers=1):
         super().__init__()
-        self.data_path = data_path
+        self.train_path = train_path
+        self.val_path = val_path
         self.batch_size = batch_size
         self.view_size = view_size
         self.max_seq_len = max_seq_len
         self.num_workers = num_workers
 
     def setup(self, stage=None):
-        # Load all datasets
-        full_ds = load_dataset(path='parquet', data_files=self.data_path, split='train')
 
-        # Filter authors with less than 16 chunks
-        author_counts = Counter(full_ds['author'])
-        valid_authors = [auth for auth, count in author_counts.items() if count >= 16] # List so we can shuffle below
+        # Load train and val data
+        self.train_raw = load_dataset(path='parquet', data_files=self.train_path, split='train')
+        self.val_raw = load_dataset(path='parquet', data_files=self.val_path, split='train')
 
-        # Create train/val split
-        # Splitting by authors, not by chunks. This ensures that we never test on an author we train on
-        random.seed(42)
-        random.shuffle(valid_authors)
-        split_idx = int(len(valid_authors) * 0.8)
-        train_author_list = valid_authors[:split_idx]
-        val_author_list = valid_authors[split_idx:]
-        train_set = set(train_author_list)
-        val_set = set(val_author_list)
-        self.train_ds_raw = full_ds.filter(lambda x: x['author'] in train_set, num_proc=10)
-        self.val_ds_raw = full_ds.filter(lambda x: x['author'] in val_set, num_proc=10)
-        self.train_dataset = AuthorshipDataset(self.train_ds_raw, self.view_size, train_author_list)
-        self.val_dataset = AuthorshipDataset(self.val_ds_raw, self.view_size, val_author_list)
+        # Extract author lists 
+        train_authors = self.train_raw.unique('author')
+        val_authors = self.val_raw.unique('author')
 
-        # Calculate weights for 1/14 batch requirement
-        self.weights = self._calculate_weights(self.train_ds_raw, train_author_list)
+        # Init Dataset objects
+        self.train_ds = AuthorshipDataset(self.train_raw, self.view_size, train_authors)
+        self.val_ds = AuthorshipDataset(self.val_raw, self.view_size, val_authors)
+
+        # Calculate weights for training sampler
+        self.weights = self._calculate_weights(self.train_raw, train_authors)
 
     def _calculate_weights(self, dataset, author_list):
         """Calculate the weight to upsample the smaller datasets. Replicating the 1/14 minimum."""
