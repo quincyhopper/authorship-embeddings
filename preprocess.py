@@ -1,6 +1,7 @@
 import random
 import re
 from collections import Counter, defaultdict
+from sklearn.model_selection import train_test_split
 from transformers import AutoTokenizer
 from datasets import (
     load_dataset, 
@@ -27,13 +28,14 @@ raw_features = Features({
     })
 
 DATA_PATH = [
+    'data/gutenberg_raw.parquet',
     'data/blogtext_raw.parquet',
     'data/reddit_raw.parquet',
     'data/twitter_train_raw.parquet',
-    #'data/gutenberg_chunked.parquet'
+    'data/twitter_test_raw.parquet',
     ]
 
-NUM_PROC = 10
+NUM_PROC = 8
 
 def create_train_val(data: list[str], train_size: float, rng: int=42):
     full_ds = load_dataset(path='parquet', data_files=DATA_PATH, split='train', features=raw_features)
@@ -41,16 +43,21 @@ def create_train_val(data: list[str], train_size: float, rng: int=42):
     # Filter authors with less than 16 chunks
     author_counts = Counter(full_ds['author'])
     valid_authors = [auth for auth, count in author_counts.items() if count >= 16] # List so we can shuffle below
+    filtered_ds = full_ds.filter(lambda x: x['author'] in set(valid_authors), num_proc=NUM_PROC)
 
-    # Create train/val split based on authors
-    random.seed(rng)
-    random.shuffle(valid_authors)
-    split_idx = int(len(valid_authors) * train_size)
-    train_authors = set(valid_authors[:split_idx])
-    val_authors = set(valid_authors[split_idx:])
+    # Make a stratified train test split
+    author_sources = filtered_ds.select_columns(['author', 'source']).to_pandas().drop_duplicates('author')
+    authors = author_sources['author'].tolist()
+    sources = author_sources['source'].tolist()
+    train_authors, val_authors = train_test_split(
+        authors,
+        test_size=0.8,
+        random_state=rng,
+        stratify=sources
+    )
 
-    train_ds = full_ds.filter(lambda x: x['author'] in train_authors, num_proc=NUM_PROC)
-    val_ds = full_ds.filter(lambda x: x['author'] in val_authors, num_proc=NUM_PROC)
+    train_ds = full_ds.filter(lambda x: x['author'] in set(train_authors), num_proc=NUM_PROC)
+    val_ds = full_ds.filter(lambda x: x['author'] in set(val_authors), num_proc=NUM_PROC)
 
     return train_ds, val_ds
 
@@ -162,9 +169,9 @@ def process_and_chunk(dataset, config, tokenizer, chunk_size):
             tokenise_and_chunk,
             fn_kwargs={'tokenizer': tokenizer, 'chunk_size': chunk_size},
             batched=True,
-            batch_size=50,
+            batch_size=1000,
             remove_columns=ds.column_names, 
-            num_proc=10
+            num_proc=NUM_PROC
             )
         
         # Cast schema
