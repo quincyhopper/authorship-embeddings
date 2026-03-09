@@ -38,7 +38,7 @@ DATA_PATH = [
 NUM_PROC = 8
 
 def create_train_val(data: list[str], train_size: float, rng: int=42):
-    full_ds = load_dataset(path='parquet', data_files=DATA_PATH, split='train', features=raw_features)
+    full_ds = load_dataset(path='parquet', data_files=DATA_PATH, split='train', features=raw_features, download_mode="force_redownload",)
 
     # Filter authors with less than 16 chunks
     author_counts = Counter(full_ds['author'])
