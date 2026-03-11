@@ -201,14 +201,12 @@ if __name__ == "__main__":
     print("Processing training split")
     train_chunks = process_and_chunk(train_ds, CONFIG, tokenizer, chunk_size=512)
     train_chunks.to_parquet('data/train_chunks.parquet')
+    print(f"Train contains {len(train_chunks)} rows")
+    print(f"Train contains {len(train_chunks.unique('author'))} unique authors")
 
     if val_ds is not None:
         print("Processing val split")
         val_chunks = process_and_chunk(val_ds, CONFIG, tokenizer, chunk_size=512)
         val_chunks.to_parquet('data/val_chunks.parquet')    
-
-    print(f"Train contains {len(train_chunks)} rows")
-    print(f"Train contains {len(train_chunks.unique('author'))} unique authors")
-
-    print(f"Val contains {len(val_chunks)} rows")
-    print(f"Train contains {len(val_chunks.unique('author'))} unique authors")
+        print(f"Val contains {len(val_chunks)} rows")
+        print(f"Train contains {len(val_chunks.unique('author'))} unique authors")
