@@ -45,7 +45,6 @@ def create_train_val(data: list[str], train_size: float, rng: int=42):
         data_files=DATA_PATH, 
         split='train', 
         features=raw_features,
-        streaming=True
         )
 
     # Filter authors with less than 16 chunks
