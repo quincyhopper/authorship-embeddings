@@ -222,7 +222,7 @@ if __name__ == "__main__":
     print(f"Total Train Unique Authors: {len(train_chunks.unique('author'))}")
 
     if val_ds is not None:
-        print("\n--- Train Set Statistics by Source ---")
+        print("\n--- Val Set Statistics by Source ---")
         val_cols = val_chunks.select_columns(['author', 'source']).to_pandas()
 
         val_stats = train_cols.groupby('source').agg(
