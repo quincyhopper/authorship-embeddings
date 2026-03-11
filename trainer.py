@@ -1,9 +1,8 @@
 import torch
 import lightning as L
-from math import ceil
 from model import ModelWrapper
 from loss import SupConLoss
-from transformers import get_cosine_schedule_with_warmup
+from transformers import get_linear_schedule_with_warmup
 
 class ContrastiveTrainer(L.LightningModule):
     def __init__(self, 
@@ -34,9 +33,9 @@ class ContrastiveTrainer(L.LightningModule):
         
         # Define total steps and warmup steps
         total_steps = self.trainer.estimated_stepping_batches
-        warmup_steps = int(total_steps * 0.1) # 10% of training is warmup
+        warmup_steps = 180
 
-        scheduler = get_cosine_schedule_with_warmup(
+        scheduler = get_linear_schedule_with_warmup(
             optimizer=optimizer,
             num_warmup_steps=warmup_steps,
             num_training_steps=total_steps
