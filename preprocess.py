@@ -1,4 +1,5 @@
 import re
+import gc
 from collections import Counter, defaultdict
 from sklearn.model_selection import train_test_split
 from transformers import AutoTokenizer
@@ -48,8 +49,8 @@ def create_train_val(data: list[str], train_size: float, rng: int=42):
         )
 
     # Filter authors with less than 16 chunks
-    author_column = full_ds.with_format('arrow').select_columns(['author'])
-    author_counts = Counter([row['author'] for row in author_column]) # Use generator to count without loading whole list
+    author_series = full_ds.select_columns(['author']).to_pandas()['author']
+    author_counts = author_series.value_counts().to_dict()
     valid_authors = {auth for auth, count in author_counts.items() if count >= 16}
     filtered_ds = full_ds.filter(lambda x: x['author'] in valid_authors, num_proc=NUM_PROC, desc="Filtering valid authors")
 
@@ -67,6 +68,10 @@ def create_train_val(data: list[str], train_size: float, rng: int=42):
             random_state=rng,
             stratify=sources
         )
+
+    # Clean up full ds
+    del full_ds
+    gc.collect()
 
     train_ds = full_ds.filter(lambda x: x['author'] in set(train_authors), num_proc=NUM_PROC, desc="Filtering for train authors")
 
@@ -168,12 +173,14 @@ def process_and_chunk(dataset, config, tokenizer, chunk_size):
         if conf and conf['pack']:
             ds = ds.map(pack_by_author, batched=True, batch_size=10000, num_proc=NUM_PROC, desc=f"Packing {source}")
 
+        current_chunk_size = 1 if source == 'gutenberg' else 10000
+
         # Tokenise and chunk
         chunks = ds.map(
             tokenise_and_chunk,
             fn_kwargs={'tokenizer': tokenizer, 'chunk_size': chunk_size},
             batched=True,
-            batch_size=1000,
+            batch_size=current_chunk_size,
             remove_columns=ds.column_names, 
             num_proc=NUM_PROC,
             desc=f"Tokenising and chunking {source}"
