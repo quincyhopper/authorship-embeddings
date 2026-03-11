@@ -1,4 +1,3 @@
-import random
 import re
 from collections import Counter, defaultdict
 from sklearn.model_selection import train_test_split
@@ -42,8 +41,8 @@ def create_train_val(data: list[str], train_size: float, rng: int=42):
 
     # Filter authors with less than 16 chunks
     author_counts = Counter(full_ds['author'])
-    valid_authors = [auth for auth, count in author_counts.items() if count >= 16] # List so we can shuffle below
-    filtered_ds = full_ds.filter(lambda x: x['author'] in set(valid_authors), num_proc=NUM_PROC)
+    valid_authors = {auth for auth, count in author_counts.items() if count >= 16}
+    filtered_ds = full_ds.filter(lambda x: x['author'] in valid_authors, num_proc=NUM_PROC)
 
     # Make a stratified train test split
     author_sources = filtered_ds.select_columns(['author', 'source']).to_pandas().drop_duplicates('author')
@@ -193,6 +192,10 @@ if __name__ == "__main__":
             'pack': True
         },
         'reddit': {
+            'cleaner': None,
+            'pack': False
+        },
+        'gutenberg': {
             'cleaner': None,
             'pack': False
         }
