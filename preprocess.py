@@ -50,13 +50,17 @@ def create_train_val(data: list[str], train_size: float, rng: int=42):
     sources = author_sources['source'].tolist()
     train_authors, val_authors = train_test_split(
         authors,
-        test_size=0.8,
+        train_size=train_size,
+        test_size=1.0 - train_size,
         random_state=rng,
         stratify=sources
     )
 
     train_ds = full_ds.filter(lambda x: x['author'] in set(train_authors), num_proc=NUM_PROC)
-    val_ds = full_ds.filter(lambda x: x['author'] in set(val_authors), num_proc=NUM_PROC)
+
+    val_ds = None # Init as None in case train size is 100%
+    if val_authors:
+        val_ds = full_ds.filter(lambda x: x['author'] in set(val_authors), num_proc=NUM_PROC)
 
     return train_ds, val_ds
 
@@ -196,12 +200,12 @@ if __name__ == "__main__":
 
     print("Processing training split")
     train_chunks = process_and_chunk(train_ds, CONFIG, tokenizer, chunk_size=512)
-
-    print("Processing val split")
-    val_chunks = process_and_chunk(val_ds, CONFIG, tokenizer, chunk_size=512)
-
     train_chunks.to_parquet('data/train_chunks.parquet')
-    val_chunks.to_parquet('data/val_chunks.parquet')
+
+    if val_ds is not None:
+        print("Processing val split")
+        val_chunks = process_and_chunk(val_ds, CONFIG, tokenizer, chunk_size=512)
+        val_chunks.to_parquet('data/val_chunks.parquet')    
 
     print(f"Train contains {len(train_chunks)} rows")
     print(f"Train contains {len(train_chunks.unique('author'))} unique authors")
