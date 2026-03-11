@@ -37,10 +37,19 @@ DATA_PATH = [
 NUM_PROC = 6
 
 def create_train_val(data: list[str], train_size: float, rng: int=42):
-    full_ds = load_dataset(path='parquet', data_files=DATA_PATH, split='train', features=raw_features, download_mode="force_redownload",)
+
+    # Load dataset(s)
+    full_ds = load_dataset(
+        path='parquet', 
+        data_files=DATA_PATH, 
+        split='train', 
+        features=raw_features,
+        streaming=True
+        )
 
     # Filter authors with less than 16 chunks
-    author_counts = Counter(full_ds['author'])
+    author_column = full_ds.with_format('arrow').select_columns(['author'])
+    author_counts = Counter([row['author'] for row in author_column]) # Use generator to count without loading whole list
     valid_authors = {auth for auth, count in author_counts.items() if count >= 16}
     filtered_ds = full_ds.filter(lambda x: x['author'] in valid_authors, num_proc=NUM_PROC, desc="Filtering valid authors")
 
