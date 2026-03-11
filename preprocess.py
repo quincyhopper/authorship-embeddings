@@ -218,17 +218,17 @@ if __name__ == "__main__":
         num_unique_authors=('author', 'nunique')
     )
     print(train_stats)
-    print(f"Total Train Chunks: {len(train_chunks)}")
+    print(f"\nTotal Train Chunks: {len(train_chunks)}")
     print(f"Total Train Unique Authors: {len(train_chunks.unique('author'))}")
 
     if val_ds is not None:
         print("\n--- Val Set Statistics by Source ---")
         val_cols = val_chunks.select_columns(['author', 'source']).to_pandas()
 
-        val_stats = train_cols.groupby('source').agg(
+        val_stats = val_cols.groupby('source').agg(
             num_chunks=('author', 'count'),
             num_unique_authors=('author', 'nunique')
         )
         print(val_stats)
-        print(f"Total Val Chunks: {len(val_chunks)}")
+        print(f"\nTotal Val Chunks: {len(val_chunks)}")
         print(f"Total Val Unique Authors: {len(val_chunks.unique('author'))}")
