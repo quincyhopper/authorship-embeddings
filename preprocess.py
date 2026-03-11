@@ -1,5 +1,4 @@
 import re
-import gc
 from collections import Counter, defaultdict
 from sklearn.model_selection import train_test_split
 from transformers import AutoTokenizer
@@ -66,10 +65,6 @@ def create_train_val(data: list[str], train_size: float, rng: int=42):
             random_state=rng,
             stratify=sources
         )
-
-    # Clean up full ds
-    del full_ds
-    gc.collect()
 
     train_ds = full_ds.filter(lambda x: x['author'] in set(train_authors), num_proc=NUM_PROC, desc="Filtering for train authors")
 
@@ -212,7 +207,7 @@ if __name__ == "__main__":
         }
     }
 
-    train_ds, val_ds = create_train_val(DATA_PATH, train_size=0.8, rng=42)
+    train_ds, val_ds = create_train_val(DATA_PATH, train_size=1.0, rng=42)
     tokenizer = AutoTokenizer.from_pretrained('roberta-large')
 
     print("Processing training split")
