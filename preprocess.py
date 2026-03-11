@@ -42,7 +42,7 @@ def create_train_val(data: list[str], train_size: float, rng: int=42):
     # Filter authors with less than 16 chunks
     author_counts = Counter(full_ds['author'])
     valid_authors = {auth for auth, count in author_counts.items() if count >= 16}
-    filtered_ds = full_ds.filter(lambda x: x['author'] in valid_authors, num_proc=NUM_PROC)
+    filtered_ds = full_ds.filter(lambda x: x['author'] in valid_authors, num_proc=NUM_PROC, desc="Filtering valid authors")
 
     # Make a stratified train test split
     author_sources = filtered_ds.select_columns(['author', 'source']).to_pandas().drop_duplicates('author')
@@ -59,11 +59,11 @@ def create_train_val(data: list[str], train_size: float, rng: int=42):
             stratify=sources
         )
 
-    train_ds = full_ds.filter(lambda x: x['author'] in set(train_authors), num_proc=NUM_PROC)
+    train_ds = full_ds.filter(lambda x: x['author'] in set(train_authors), num_proc=NUM_PROC, desc="Filtering for train authors")
 
     val_ds = None # Init as None in case train size is 100%
     if val_authors:
-        val_ds = full_ds.filter(lambda x: x['author'] in set(val_authors), num_proc=NUM_PROC)
+        val_ds = full_ds.filter(lambda x: x['author'] in set(val_authors), num_proc=NUM_PROC, desc="Filtering for val authors")
 
     return train_ds, val_ds
 
@@ -146,19 +146,18 @@ def process_and_chunk(dataset, config, tokenizer, chunk_size):
     sources = dataset.unique('source')
 
     for source in sources:
-        print(f"Processing {source}")
 
         # Get rows from this dataset 
-        ds = dataset.filter(lambda x: x['source'] == source, num_proc=NUM_PROC)
+        ds = dataset.filter(lambda x: x['source'] == source, num_proc=NUM_PROC, desc=f"Filtering {source} documents")
 
         # Apply cleaning if necessary
         conf = config.get(source)
         if conf and conf['cleaner']:
-            ds = ds.map(conf['cleaner'], num_proc=NUM_PROC)
+            ds = ds.map(conf['cleaner'], num_proc=NUM_PROC, desc=f"Cleaning {source}")
 
         # Apply packing if necessary (e.g. for Twitter)
         if conf and conf['pack']:
-            ds = ds.map(pack_by_author, batched=True, batch_size=10000, num_proc=NUM_PROC)
+            ds = ds.map(pack_by_author, batched=True, batch_size=10000, num_proc=NUM_PROC, desc=f"Packing {source}")
 
         # Tokenise and chunk
         chunks = ds.map(
@@ -167,7 +166,8 @@ def process_and_chunk(dataset, config, tokenizer, chunk_size):
             batched=True,
             batch_size=1000,
             remove_columns=ds.column_names, 
-            num_proc=NUM_PROC
+            num_proc=NUM_PROC,
+            desc=f"Tokenising and chunking {source}"
             )
         
         # Cast schema
