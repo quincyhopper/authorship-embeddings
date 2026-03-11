@@ -34,7 +34,7 @@ DATA_PATH = [
     'data/twitter_test_raw.parquet',
     ]
 
-NUM_PROC = 8
+NUM_PROC = 6
 
 def create_train_val(data: list[str], train_size: float, rng: int=42):
     full_ds = load_dataset(path='parquet', data_files=DATA_PATH, split='train', features=raw_features, download_mode="force_redownload",)
