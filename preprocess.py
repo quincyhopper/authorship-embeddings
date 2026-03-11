@@ -90,19 +90,9 @@ def tokenise_and_chunk(batch, tokenizer, chunk_size):
         "attention_mask": []
     }
 
-    # Check if batch comes from Project Gutenberg (first and last chunks will be dropped)
-    is_gutenberg = batch.get('source', [None])[0] == 'gutenberg'
-
     # Fill the batch
     for original_idx, chunk_indices in doc_to_chunk_indices.items():
-
-        # Trim gutenberg docs with at least 3 chunks
-        if is_gutenberg and len(chunk_indices) > 2:
-            final_indices = chunk_indices[1:-1]
-        else:
-            final_indices = chunk_indices
-
-        for idx in final_indices:
+        for idx in chunk_indices:
             new_batch["author"].append(str(batch["author"][original_idx])) 
             new_batch["doc_id"].append(str(batch["doc_id"][original_idx])) 
             new_batch["source"].append(str(batch["source"][original_idx]))
