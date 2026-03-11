@@ -50,8 +50,7 @@ def create_train_val(data: list[str], train_size: float, rng: int=42):
     sources = author_sources['source'].tolist()
 
     if train_size >= 1.0:
-        train_authors = authors
-        val_authors = []
+        return filtered_ds.shuffle(seed=rng), None
     else:
         train_authors, val_authors = train_test_split(
             authors,
