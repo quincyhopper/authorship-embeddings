@@ -48,9 +48,8 @@ def create_train_val(data: list[str], train_size: float, rng: int=42):
         )
 
     # Filter authors with less than 16 chunks
-    author_series = full_ds.select_columns(['author']).to_pandas()['author']
-    author_counts = author_series.value_counts().to_dict()
-    valid_authors = {auth for auth, count in author_counts.items() if count >= 16}
+    author_counts = full_ds.select_columns(['author']).to_pandas()['author'].value_counts()
+    valid_authors = set(author_counts[author_counts >= 16].index)
     filtered_ds = full_ds.filter(lambda x: x['author'] in valid_authors, num_proc=NUM_PROC, desc="Filtering valid authors")
 
     # Make a stratified train test split
