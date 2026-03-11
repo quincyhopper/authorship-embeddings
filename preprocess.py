@@ -48,13 +48,17 @@ def create_train_val(data: list[str], train_size: float, rng: int=42):
     author_sources = filtered_ds.select_columns(['author', 'source']).to_pandas().drop_duplicates('author')
     authors = author_sources['author'].tolist()
     sources = author_sources['source'].tolist()
-    train_authors, val_authors = train_test_split(
-        authors,
-        train_size=train_size,
-        test_size=1.0 - train_size,
-        random_state=rng,
-        stratify=sources
-    )
+
+    if train_size >= 1.0:
+        train_authors = authors
+        val_authors = []
+    else:
+        train_authors, val_authors = train_test_split(
+            authors,
+            train_size=train_size,
+            random_state=rng,
+            stratify=sources
+        )
 
     train_ds = full_ds.filter(lambda x: x['author'] in set(train_authors), num_proc=NUM_PROC)
 
