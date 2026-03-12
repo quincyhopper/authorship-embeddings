@@ -26,14 +26,6 @@ raw_features = Features({
     "source": Value("string")
     })
 
-DATA_PATH = [
-    'data/gutenberg_raw.parquet',
-    'data/blogtext_raw.parquet',
-    'data/reddit_raw.parquet',
-    'data/twitter_train_raw.parquet',
-    'data/twitter_test_raw.parquet',
-    ]
-
 NUM_PROC = 6
 
 def create_train_val(data: list[str], train_size: float, rng: int=42):
@@ -41,7 +33,7 @@ def create_train_val(data: list[str], train_size: float, rng: int=42):
     # Load dataset(s)
     full_ds = load_dataset(
         path='parquet', 
-        data_files=DATA_PATH, 
+        data_files=data, 
         split='train', 
         features=raw_features,
         )
@@ -50,6 +42,7 @@ def create_train_val(data: list[str], train_size: float, rng: int=42):
     author_counts = full_ds.select_columns(['author']).to_pandas()['author'].value_counts()
     valid_authors = set(author_counts[author_counts >= 16].index)
     filtered_ds = full_ds.filter(lambda x: x['author'] in valid_authors, num_proc=NUM_PROC, desc="Filtering valid authors")
+    del full_ds # Save memory
 
     # Make a stratified train test split
     author_sources = filtered_ds.select_columns(['author', 'source']).to_pandas().drop_duplicates('author')
@@ -66,11 +59,12 @@ def create_train_val(data: list[str], train_size: float, rng: int=42):
             stratify=sources
         )
 
-    train_ds = full_ds.filter(lambda x: x['author'] in set(train_authors), num_proc=NUM_PROC, desc="Filtering for train authors")
+    # Filter train dataset
+    train_ds = filtered_ds.filter(lambda x: x['author'] in set(train_authors), num_proc=NUM_PROC, desc="Filtering for train authors")
 
     val_ds = None # Init as None in case train size is 100%
     if val_authors:
-        val_ds = full_ds.filter(lambda x: x['author'] in set(val_authors), num_proc=NUM_PROC, desc="Filtering for val authors")
+        val_ds = filtered_ds.filter(lambda x: x['author'] in set(val_authors), num_proc=NUM_PROC, desc="Filtering for val authors")
 
     return train_ds, val_ds
 
@@ -207,11 +201,20 @@ if __name__ == "__main__":
         }
     }
 
+    DATA_PATH = [
+        'data/gutenberg_raw.parquet',
+        'data/blogtext_raw.parquet',
+        'data/reddit_raw.parquet',
+        'data/twitter_train_raw.parquet',
+        'data/twitter_test_raw.parquet',
+        ]
+
     train_ds, val_ds = create_train_val(DATA_PATH, train_size=1.0, rng=42)
     tokenizer = AutoTokenizer.from_pretrained('roberta-large')
 
     print("Processing training split")
     train_chunks = process_and_chunk(train_ds, CONFIG, tokenizer, chunk_size=512)
+    del train_ds
     train_chunks.to_parquet('data/train_chunks.parquet')
 
     if val_ds is not None:
