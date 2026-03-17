@@ -149,8 +149,6 @@ def tokenise_and_chunk(examples, tokeniser, chunk_size=512):
     return new_batch
 
 def process(dataset: Dataset, source_name: str, tokeniser, chunk_size: int):
-        print(f"Tokenising and chunking {source_name}")
-
         return dataset.map(
             tokenise_and_chunk,
             batched=True,
@@ -158,7 +156,7 @@ def process(dataset: Dataset, source_name: str, tokeniser, chunk_size: int):
             fn_kwargs={'tokeniser': tokeniser, 'chunk_size': chunk_size},
             remove_columns=dataset.column_names,
             num_proc=NUM_PROC,
-            desc="Tokenising and chunking",
+            desc=f"Tokenising and chunking {source_name}",
             features=HF_FEATURES
         )
 
