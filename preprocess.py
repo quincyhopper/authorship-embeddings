@@ -107,8 +107,8 @@ def preprocess(ds: Dataset, source_name, config):
     if conf and conf['pack']:
         df = ds.to_pandas()
 
-        # Sample 1,000 tweets per author (using frac=1 in case author has <1,000 tweets)
-        df = df.sample(frac=1).groupby('author').head(100)
+        # Sample 10,000 tweets per author (using frac=1 in case author has <10,000 tweets)
+        df = df.sample(frac=1).groupby('author').head(10000)
         
         # Join tweets with 3 newlines
         df_packed = df.groupby('author', as_index=False).agg({
@@ -121,7 +121,7 @@ def preprocess(ds: Dataset, source_name, config):
         ds = Dataset.from_pandas(df_packed)
         if "__index_level_0__" in ds.column_names:
             ds = ds.remove_columns(["__index_level_0__"])
-            
+
     return ds
 
 def tokenise_and_chunk(examples, tokeniser, chunk_size=512):
