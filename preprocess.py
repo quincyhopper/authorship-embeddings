@@ -1,17 +1,19 @@
-import re
-from collections import Counter, defaultdict
+import pyarrow.compute as pc
+import pyarrow as pa
+import pandas as pd
+import numpy as np 
 from sklearn.model_selection import train_test_split
 from transformers import AutoTokenizer
 from datasets import (
     load_dataset, 
-    concatenate_datasets,
     Features,
     Value,
-    Sequence
+    Sequence,
+    Dataset
     )
 
 # Schema to make sure columns are read correctly
-hf_features = Features({
+HF_FEATURES = Features({
     "author": Value("string"),
     "doc_id": Value("string"),
     "source": Value("string"),
@@ -19,166 +21,121 @@ hf_features = Features({
     "attention_mask": Sequence(Value("int8")),
     })
 
-raw_features = Features({
+RAW_FEATURES = Features({
     "author": Value("string"),
     "text": Value("string"),
     "doc_id": Value("string"),
     "source": Value("string")
     })
 
-NUM_PROC = 6
+NUM_PROC = 1
 
-def create_train_val(data: list[str], train_size: float, rng: int=42):
+def filter_valid_authors(ds: Dataset):
 
-    # Load dataset(s)
-    full_ds = load_dataset(
-        path='parquet', 
-        data_files=data, 
-        split='train', 
-        features=raw_features,
-        )
+    author_column = ds.data.column('author')
+    value_counts = pc.value_counts(author_column)
+    mask = pc.greater_equal(value_counts.field('counts'), 16)
+    author_counts = value_counts.filter(mask)
+    valid_authors = author_counts.field('values')
+    full_mask = pc.is_in(ds.data.column('author'), value_set=valid_authors)
+    indices = np.where(full_mask.to_numpy())[0]
+    
+    return ds.select(indices)
 
-    # Filter authors with less than 16 chunks
-    author_counts = full_ds.select_columns(['author']).to_pandas()['author'].value_counts()
-    valid_authors = set(author_counts[author_counts >= 16].index)
-    filtered_ds = full_ds.filter(lambda x: x['author'] in valid_authors, num_proc=NUM_PROC, desc="Filtering valid authors")
-    del full_ds # Save memory
+def create_train_val(filtered_ds: Dataset, train_size, seed):
+    if train_size == 1.0:
+        return filtered_ds.shuffle(seed), None
+    
+    authors = filtered_ds.unique('author')
 
-    # Make a stratified train test split
-    author_sources = filtered_ds.select_columns(['author', 'source']).to_pandas().drop_duplicates('author')
-    authors = author_sources['author'].tolist()
-    sources = author_sources['source'].tolist()
+    train_author_ids, val_author_ids = train_test_split(
+        authors,
+        train_size=train_size,
+        random_state=seed,
+    )
 
-    if train_size >= 1.0:
-        return filtered_ds.shuffle(seed=rng), None
-    else:
-        train_authors, val_authors = train_test_split(
-            authors,
-            train_size=train_size,
-            random_state=rng,
-            stratify=sources
-        )
+    current_authors = filtered_ds.data.column('author')
+    train_idx = np.where(pc.is_in(current_authors, value_set=pa.array(train_author_ids)).to_numpy())[0]
+    train_ds = filtered_ds.select(train_idx)
 
-    # Filter train dataset
-    train_ds = filtered_ds.filter(lambda x: x['author'] in set(train_authors), num_proc=NUM_PROC, desc="Filtering for train authors")
+    val_idx = np.where(pc.is_in(current_authors, value_set=pa.array(val_author_ids)).to_numpy())[0]
+    val_ds = filtered_ds.select(val_idx)
 
-    val_ds = None # Init as None in case train size is 100%
-    if val_authors:
-        val_ds = filtered_ds.filter(lambda x: x['author'] in set(val_authors), num_proc=NUM_PROC, desc="Filtering for val authors")
+    return train_ds, val_ds 
 
-    return train_ds, val_ds
+def pack_by_author(batch):
+    df = pd.DataFrame(batch)
+    
+    # Group by author and join their texts with triple linespace
+    packed = df.groupby('author', as_index=False).agg({
+        'text': lambda x: "\n\n\n".join(x),
+        'source': 'first',
+        'doc_id': lambda x: f"packed_{x.iloc[0]}"
+    })
+    
+    return packed.to_dict('list')
 
-def tokenise_and_chunk(batch, tokenizer, chunk_size):
+def clean_twitter(batch):
+    texts = batch['text']
+    texts = pc.replace_matches(texts, r'https?://\S+|www\.\S+', '<h>') # Hyperlinks
+    texts = pc.replace_matches(texts, r'@\w+', '<u>') # Usernames
+    batch['text'] = texts
+    return batch
 
-    # Tokenise the texts
-    outputs = tokenizer(
-        batch['text'],
+def preprocess(ds, source_name, config):
+     
+    conf = config.get(source_name)
+    if conf and conf['cleaner']:
+        print(f"Cleaning {source_name}")
+        ds = ds.map(conf['cleaner'], num_proc=NUM_PROC, desc=f"Cleaning {source_name}")
+
+    # Apply packing if necessary (e.g. for Twitter)
+    if conf and conf['pack']:
+        print(f"Packing {source_name}")
+        ds = ds.map(pack_by_author, batched=True, batch_size=10000, num_proc=NUM_PROC, desc=f"Packing {source_name}")
+
+    return ds
+
+def tokenise_and_chunk(examples, tokeniser, chunk_size=512):
+
+    outputs = tokeniser(
+        examples["text"],
         truncation=True,
         max_length=chunk_size,
         return_overflowing_tokens=True,
         stride=0
     )
 
-    # Extract chunk indices and tokens
-    sample_map = outputs.pop('overflow_to_sample_mapping') 
-    input_ids = outputs['input_ids']
-    attention_masks = outputs['attention_mask']
+    sample_map = outputs.pop("overflow_to_sample_mapping")
+    new_batch = {k: [] for k in HF_FEATURES.keys()}
 
-    # Group indices of full-sized chunks by their original document
-    doc_to_chunk_indices = defaultdict(list)
-    for chunk_idx, original_idx in enumerate(sample_map):
-        if len(input_ids[chunk_idx]) == chunk_size:
-            doc_to_chunk_indices[original_idx].append(chunk_idx)
-
-    new_batch = {
-        "author": [],
-        "doc_id": [],
-        "source": [],
-        "input_ids": [],
-        "attention_mask": []
-    }
-
-    # Fill the batch
-    for original_idx, chunk_indices in doc_to_chunk_indices.items():
-        for idx in chunk_indices:
-            new_batch["author"].append(str(batch["author"][original_idx])) 
-            new_batch["doc_id"].append(str(batch["doc_id"][original_idx])) 
-            new_batch["source"].append(str(batch["source"][original_idx]))
-
-            new_batch["input_ids"].append(input_ids[idx])
-            new_batch["attention_mask"].append(attention_masks[idx])
-
+    for i, original_idx in enumerate(sample_map):
+        # Only keep full-sized chunks to maintain consistency
+        if len(outputs["input_ids"][i]) == chunk_size:
+            new_batch["input_ids"].append(outputs["input_ids"][i])
+            new_batch["attention_mask"].append(outputs["attention_mask"][i])
+            new_batch["author"].append(examples["author"][original_idx])
+            new_batch["doc_id"].append(examples["doc_id"][original_idx])
+            new_batch["source"].append(examples["source"][original_idx])
+            
     return new_batch
 
-def pack_by_author(batch):
-    """Group all texts in batch by author and join them with triple linespace."""
+def process(dataset: Dataset, source_name: str, tokeniser, chunk_size: int):
+        print(f"Tokenising and chunking {source_name}")
 
-    author_map = defaultdict(list)
-    for author, text in zip(batch['author'], batch['text']):
-        author_map[author].append(text)
-
-    packed_authors = []
-    packed_texts = []
-    packed_doc_ids = [] 
-
-    for author, texts in author_map.items():
-        packed_authors.append(author)
-        packed_texts.append("\n\n\n".join(texts))
-        packed_doc_ids.append(f"packed_{author}")
-
-    return {
-        'author': packed_authors,
-        'text': packed_texts,
-        'doc_id': packed_doc_ids,
-        'source': batch['source'][:len(packed_authors)]
-    }
-
-def clean_twitter(example):
-    text = example['text']
-    text = re.sub(r'https?://\S+|www\.\S+', '<h>', text) # Hyperlinks
-    text = re.sub(r'@\w+', '<u>', text) # Usernames
-    example['text'] = text
-    return example
-
-def process_and_chunk(dataset, config, tokenizer, chunk_size):
-    processed = []
-
-    # Get the names of all of the sources
-    sources = dataset.unique('source')
-
-    for source in sources:
-
-        # Get rows from this dataset 
-        ds = dataset.filter(lambda x: x['source'] == source, num_proc=NUM_PROC, desc=f"Filtering {source} documents")
-
-        # Apply cleaning if necessary
-        conf = config.get(source)
-        if conf and conf['cleaner']:
-            ds = ds.map(conf['cleaner'], num_proc=NUM_PROC, desc=f"Cleaning {source}")
-
-        # Apply packing if necessary (e.g. for Twitter)
-        if conf and conf['pack']:
-            ds = ds.map(pack_by_author, batched=True, batch_size=10000, num_proc=NUM_PROC, desc=f"Packing {source}")
-
-        current_chunk_size = 1 if source == 'gutenberg' else 10000
-
-        # Tokenise and chunk
-        chunks = ds.map(
+        return dataset.map(
             tokenise_and_chunk,
-            fn_kwargs={'tokenizer': tokenizer, 'chunk_size': chunk_size},
             batched=True,
-            batch_size=current_chunk_size,
-            remove_columns=ds.column_names, 
+            batch_size=1,
+            fn_kwargs={'tokeniser': tokeniser, 'chunk_size': chunk_size},
+            remove_columns=dataset.column_names,
             num_proc=NUM_PROC,
-            desc=f"Tokenising and chunking {source}"
-            )
-        
-        # Cast schema
-        chunks = chunks.cast(hf_features)
+            desc="Tokenising and chunking"
+        ).cast(HF_FEATURES)
 
-        processed.append(chunks)
-
-    return concatenate_datasets(processed)
+def make_report(ds: Dataset, split: str):
+    print(f"\nTotal {split} chunks: {len(ds)}")
+    print(f"Total {split} unique authors: {len(train_chunks.unique('author'))}")
 
 if __name__ == "__main__":
 
@@ -201,46 +158,44 @@ if __name__ == "__main__":
         }
     }
 
-    DATA_PATH = [
+    # Define filenames
+    data_files = [
         'data/gutenberg_raw.parquet',
-        'data/blogtext_raw.parquet',
-        'data/reddit_raw.parquet',
-        'data/twitter_train_raw.parquet',
-        'data/twitter_test_raw.parquet',
-        ]
+    ]
 
-    train_ds, val_ds = create_train_val(DATA_PATH, train_size=1.0, rng=42)
-    tokenizer = AutoTokenizer.from_pretrained('roberta-large')
+    source_name = 'gutenberg'
+    train_output = 'data/gutenberg_train.parquet'
+    val_output = ''
 
-    print("Processing training split")
-    train_chunks = process_and_chunk(train_ds, CONFIG, tokenizer, chunk_size=512)
-    del train_ds
-    train_chunks.to_parquet('data/train_chunks.parquet')
+    # Load dataset
+    print('Loading dataset')
+    full_ds = load_dataset(path='parquet', data_files=data_files, split='train')
 
+    # Filter for authors with more than 16 texts
+    print('Filtering authors')
+    filtered_ds = filter_valid_authors(full_ds)
+
+    # Get train/val splits
+    print('Making train/val split')
+    train_ds, val_ds = create_train_val(filtered_ds, train_size=1.0, seed=42)
+
+    # Preprocess
+    train_clean = preprocess(train_ds, source_name, CONFIG)
+
+    # Load tokeniser
+    print('Loading tokeniser')
+    tokeniser = AutoTokenizer.from_pretrained('roberta-large')
+
+    # Tokenise and chunk
+    train_chunks = process(train_clean, source_name, tokeniser, chunk_size=512)
+    train_chunks.to_parquet(train_output)
+
+    # Do the same for val if necessary
     if val_ds is not None:
-        print("Processing val split")
-        val_chunks = process_and_chunk(val_ds, CONFIG, tokenizer, chunk_size=512)
-        val_chunks.to_parquet('data/val_chunks.parquet')    
+        val_clean = preprocess(val_ds, source_name, CONFIG)
+        val_chunks = process(val_clean, source_name, tokeniser, chunk_size=512)
+        val_chunks.to_parquet(val_output)
 
-    print("\n--- Train Set Statistics by Source ---")
-    train_cols = train_chunks.select_columns(['author', 'source']).to_pandas()
-
-    train_stats = train_cols.groupby('source').agg(
-        num_chunks=('author', 'count'),
-        num_unique_authors=('author', 'nunique')
-    )
-    print(train_stats)
-    print(f"\nTotal Train Chunks: {len(train_chunks)}")
-    print(f"Total Train Unique Authors: {len(train_chunks.unique('author'))}")
-
+    make_report(train_chunks, 'train')
     if val_ds is not None:
-        print("\n--- Val Set Statistics by Source ---")
-        val_cols = val_chunks.select_columns(['author', 'source']).to_pandas()
-
-        val_stats = val_cols.groupby('source').agg(
-            num_chunks=('author', 'count'),
-            num_unique_authors=('author', 'nunique')
-        )
-        print(val_stats)
-        print(f"\nTotal Val Chunks: {len(val_chunks)}")
-        print(f"Total Val Unique Authors: {len(val_chunks.unique('author'))}")
+        make_report(val_chunks, 'val')
