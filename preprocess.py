@@ -2,6 +2,7 @@ import pyarrow.compute as pc
 import pyarrow as pa
 import pandas as pd
 import numpy as np 
+from collections import defaultdict
 from sklearn.model_selection import train_test_split
 from transformers import AutoTokenizer
 from datasets import (
@@ -12,7 +13,13 @@ from datasets import (
     Dataset
     )
 
-# Schema to make sure columns are read correctly
+RAW_FEATURES = Features({
+    "author": Value("string"),
+    "text": Value("string"),
+    "doc_id": Value("string"),
+    "source": Value("string")
+    })
+
 HF_FEATURES = Features({
     "author": Value("string"),
     "doc_id": Value("string"),
@@ -21,14 +28,7 @@ HF_FEATURES = Features({
     "attention_mask": Sequence(Value("int8")),
     })
 
-RAW_FEATURES = Features({
-    "author": Value("string"),
-    "text": Value("string"),
-    "doc_id": Value("string"),
-    "source": Value("string")
-    })
-
-NUM_PROC = 1
+NUM_PROC = 4
 
 def filter_valid_authors(ds: Dataset):
 
@@ -64,36 +64,64 @@ def create_train_val(filtered_ds: Dataset, train_size, seed):
     return train_ds, val_ds 
 
 def pack_by_author(batch):
-    df = pd.DataFrame(batch)
+    if 'author' not in batch:
+        raise KeyError(f"Column 'author' missing! Available columns {list(batch.keys())}")
     
-    # Group by author and join their texts with triple linespace
-    packed = df.groupby('author', as_index=False).agg({
-        'text': lambda x: "\n\n\n".join(x),
-        'source': 'first',
-        'doc_id': lambda x: f"packed_{x.iloc[0]}"
-    })
+    groups = defaultdict(list)
+
+    # Iterate once through the batch
+    for i in range(len(batch['author'])):
+        auth = batch['author'][i]
+        groups[auth].append({
+            'text': batch['text'][i],
+            'source': batch['source'][i],
+            'doc_id': batch['doc_id'][i]
+        })
     
-    return packed.to_dict('list')
+    # Reconstruct the packed batch
+    new_batch = {"author": [], "text": [], "source": [], "doc_id": []}
+    for auth, items in groups.items():
+        new_batch["author"].append(auth)
+        # Join texts with triple newline
+        new_batch["text"].append("\n\n\n".join(item['text'] for item in items))
+        new_batch["source"].append(items[0]['source'])
+        new_batch["doc_id"].append(f"packed_{items[0]['doc_id']}")
+        
+    return new_batch
 
 def clean_twitter(batch):
-    texts = batch['text']
-    texts = pc.replace_matches(texts, r'https?://\S+|www\.\S+', '<h>') # Hyperlinks
-    texts = pc.replace_matches(texts, r'@\w+', '<u>') # Usernames
-    batch['text'] = texts
+
+    texts = pa.array(batch['text'])
+    texts = pc.replace_substring_regex(texts, pattern=r'https?://\S+|www\.\S+', replacement='<h>')
+    texts = pc.replace_substring_regex(texts, pattern=r'@\w+', replacement='<u>')
+
+    batch['text'] = texts.to_pylist()
     return batch
 
-def preprocess(ds, source_name, config):
-     
+def preprocess(ds: Dataset, source_name, config):
     conf = config.get(source_name)
+
     if conf and conf['cleaner']:
-        print(f"Cleaning {source_name}")
-        ds = ds.map(conf['cleaner'], num_proc=NUM_PROC, desc=f"Cleaning {source_name}")
+        ds = ds.map(conf['cleaner'], batched=True, batch_size=1000, num_proc=NUM_PROC, desc=f"Cleaning {source_name}")
 
-    # Apply packing if necessary (e.g. for Twitter)
     if conf and conf['pack']:
-        print(f"Packing {source_name}")
-        ds = ds.map(pack_by_author, batched=True, batch_size=10000, num_proc=NUM_PROC, desc=f"Packing {source_name}")
+        df = ds.to_pandas()
 
+        # Sample 1,000 tweets per author (using frac=1 in case author has <1,000 tweets)
+        df = df.sample(frac=1).groupby('author').head(100)
+        
+        # Join tweets with 3 newlines
+        df_packed = df.groupby('author', as_index=False).agg({
+            'text': lambda x: "\n\n\n".join(x.astype(str)),
+            'source': 'first',
+            'doc_id': lambda x: f"packed_{x.iloc[0]}"
+        })
+        
+        # Convert back to HF Dataset and clean up index
+        ds = Dataset.from_pandas(df_packed)
+        if "__index_level_0__" in ds.column_names:
+            ds = ds.remove_columns(["__index_level_0__"])
+            
     return ds
 
 def tokenise_and_chunk(examples, tokeniser, chunk_size=512):
@@ -126,12 +154,13 @@ def process(dataset: Dataset, source_name: str, tokeniser, chunk_size: int):
         return dataset.map(
             tokenise_and_chunk,
             batched=True,
-            batch_size=1,
+            batch_size=1000,
             fn_kwargs={'tokeniser': tokeniser, 'chunk_size': chunk_size},
             remove_columns=dataset.column_names,
             num_proc=NUM_PROC,
-            desc="Tokenising and chunking"
-        ).cast(HF_FEATURES)
+            desc="Tokenising and chunking",
+            features=HF_FEATURES
+        )
 
 def make_report(ds: Dataset, split: str):
     print(f"\nTotal {split} chunks: {len(ds)}")
@@ -160,16 +189,17 @@ if __name__ == "__main__":
 
     # Define filenames
     data_files = [
-        'data/gutenberg_raw.parquet',
+        'data/twitter_train_raw.parquet',
+        'data/twitter_test_raw.parquet'
     ]
 
-    source_name = 'gutenberg'
-    train_output = 'data/gutenberg_train.parquet'
+    source_name = 'twitter'
+    train_output = 'data/twitter_train.parquet'
     val_output = ''
 
     # Load dataset
     print('Loading dataset')
-    full_ds = load_dataset(path='parquet', data_files=data_files, split='train')
+    full_ds = load_dataset(path='parquet', data_files=data_files, split='train', features=RAW_FEATURES)
 
     # Filter for authors with more than 16 texts
     print('Filtering authors')
