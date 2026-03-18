@@ -1,17 +1,18 @@
 import pyarrow.compute as pc
 import pyarrow as pa
-import pandas as pd
 import numpy as np 
-from collections import defaultdict
 from sklearn.model_selection import train_test_split
 from transformers import AutoTokenizer
 from datasets import (
     load_dataset, 
+    disable_caching,
     Features,
     Value,
     Sequence,
     Dataset
     )
+
+disable_caching()
 
 RAW_FEATURES = Features({
     "author": Value("string"),
@@ -28,7 +29,7 @@ HF_FEATURES = Features({
     "attention_mask": Sequence(Value("int8")),
     })
 
-NUM_PROC = 1
+NUM_PROC = 4
 
 def clean_twitter(batch):
 
@@ -43,7 +44,14 @@ def preprocess(ds: Dataset, source_name, config):
     conf = config.get(source_name)
 
     if conf and conf['cleaner']:
-        ds = ds.map(conf['cleaner'], batched=True, batch_size=1000, num_proc=NUM_PROC, desc=f"Cleaning {source_name}")
+        ds = ds.map(
+            conf['cleaner'], 
+            batched=True, 
+            batch_size=1000, 
+            num_proc=NUM_PROC, 
+            desc=f"Cleaning {source_name}",
+            load_from_cache_file=False
+            )
 
     if conf and conf['pack']:
         df = ds.to_pandas()
@@ -98,7 +106,8 @@ def process(ds: Dataset, source_name: str, tokeniser, chunk_size: int):
             remove_columns=ds.column_names,
             num_proc=NUM_PROC,
             desc=f"Tokenising and chunking {source_name}",
-            features=HF_FEATURES
+            features=HF_FEATURES,
+            load_from_cache_file=False
         )
 
 def filter_valid_authors(ds: Dataset):
@@ -129,18 +138,26 @@ def create_train_val(filtered_chunks: Dataset, train_size, seed):
         random_state=seed,
     )
 
-    current_authors = filtered_chunks.data.column('author')
-    train_idx = np.where(pc.is_in(current_authors, value_set=pa.array(train_author_ids)).to_numpy())[0]
-    train_ds = filtered_chunks.select(train_idx)
+    train_author_set = set(train_author_ids)
+    val_author_set = set(val_author_ids)
 
-    val_idx = np.where(pc.is_in(current_authors, value_set=pa.array(val_author_ids)).to_numpy())[0]
-    val_ds = filtered_chunks.select(val_idx)
+    train_ds = filtered_chunks.filter(
+        lambda x:x['author'] in train_author_set,
+        num_proc=NUM_PROC,
+        desc="Filtering train authors"
+    )
+
+    val_ds = filtered_chunks.filter(
+        lambda x:x['author'] in val_author_set,
+        num_proc=NUM_PROC,
+        desc="Filtering val authors"
+    )
 
     return train_ds, val_ds 
 
 def make_report(ds: Dataset, split: str):
     print(f"\nTotal {split} chunks: {len(ds)}")
-    print(f"Total {split} unique authors: {len(train_chunks.unique('author'))}")
+    print(f"Total {split} unique authors: {len(ds.unique('author'))}")
 
 if __name__ == "__main__":
 
@@ -153,19 +170,21 @@ if __name__ == "__main__":
 
     # Define filenames
     data_files = [
-        'data/blogtext_raw.parquet',
+        'data/reddit_raw.parquet',
     ]
 
-    train_size = 1.0
-    source_name = 'blogs'
-    train_output = 'data/blogtext_train.parquet'
-    val_output = ''
+    train_size = 0.9
+    source_name = 'blog'
+    train_output = 'data/reddit_train.parquet'
+    val_output = 'data/reddit_val.parquet'
 
     print('Loading dataset...')
     full_ds = load_dataset(path='parquet', data_files=data_files, split='train', features=RAW_FEATURES)
     clean_ds = preprocess(full_ds, source_name, CONFIG)
-    tokeniser = AutoTokenizer.from_pretrained('prajjwal1/bert-tiny')
+
+    tokeniser = AutoTokenizer.from_pretrained('roberta-large')
     chunks = process(clean_ds, source_name, tokeniser, chunk_size=512)
+
     filtered_chunks = filter_valid_authors(chunks)
     train_chunks, val_chunks = create_train_val(filtered_chunks, train_size=train_size, seed=42)
 
