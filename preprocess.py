@@ -28,66 +28,7 @@ HF_FEATURES = Features({
     "attention_mask": Sequence(Value("int8")),
     })
 
-NUM_PROC = 4
-
-def filter_valid_authors(ds: Dataset):
-
-    author_column = ds.data.column('author')
-    value_counts = pc.value_counts(author_column)
-    mask = pc.greater_equal(value_counts.field('counts'), 16)
-    author_counts = value_counts.filter(mask)
-    valid_authors = author_counts.field('values')
-    full_mask = pc.is_in(ds.data.column('author'), value_set=valid_authors)
-    indices = np.where(full_mask.to_numpy())[0]
-    
-    return ds.select(indices)
-
-def create_train_val(filtered_ds: Dataset, train_size, seed):
-    if train_size == 1.0:
-        return filtered_ds.shuffle(seed), None
-    
-    authors = filtered_ds.unique('author')
-
-    train_author_ids, val_author_ids = train_test_split(
-        authors,
-        train_size=train_size,
-        random_state=seed,
-    )
-
-    current_authors = filtered_ds.data.column('author')
-    train_idx = np.where(pc.is_in(current_authors, value_set=pa.array(train_author_ids)).to_numpy())[0]
-    train_ds = filtered_ds.select(train_idx)
-
-    val_idx = np.where(pc.is_in(current_authors, value_set=pa.array(val_author_ids)).to_numpy())[0]
-    val_ds = filtered_ds.select(val_idx)
-
-    return train_ds, val_ds 
-
-def pack_by_author(batch):
-    if 'author' not in batch:
-        raise KeyError(f"Column 'author' missing! Available columns {list(batch.keys())}")
-    
-    groups = defaultdict(list)
-
-    # Iterate once through the batch
-    for i in range(len(batch['author'])):
-        auth = batch['author'][i]
-        groups[auth].append({
-            'text': batch['text'][i],
-            'source': batch['source'][i],
-            'doc_id': batch['doc_id'][i]
-        })
-    
-    # Reconstruct the packed batch
-    new_batch = {"author": [], "text": [], "source": [], "doc_id": []}
-    for auth, items in groups.items():
-        new_batch["author"].append(auth)
-        # Join texts with triple newline
-        new_batch["text"].append("\n\n\n".join(item['text'] for item in items))
-        new_batch["source"].append(items[0]['source'])
-        new_batch["doc_id"].append(f"packed_{items[0]['doc_id']}")
-        
-    return new_batch
+NUM_PROC = 1
 
 def clean_twitter(batch):
 
@@ -148,17 +89,54 @@ def tokenise_and_chunk(examples, tokeniser, chunk_size=512):
             
     return new_batch
 
-def process(dataset: Dataset, source_name: str, tokeniser, chunk_size: int):
-        return dataset.map(
+def process(ds: Dataset, source_name: str, tokeniser, chunk_size: int):
+        return ds.map(
             tokenise_and_chunk,
             batched=True,
             batch_size=1000,
             fn_kwargs={'tokeniser': tokeniser, 'chunk_size': chunk_size},
-            remove_columns=dataset.column_names,
+            remove_columns=ds.column_names,
             num_proc=NUM_PROC,
             desc=f"Tokenising and chunking {source_name}",
             features=HF_FEATURES
         )
+
+def filter_valid_authors(ds: Dataset):
+    print("Filtering authors")
+
+    author_column = ds.data.column('author')
+    value_counts = pc.value_counts(author_column)
+    mask = pc.greater_equal(value_counts.field('counts'), 16)
+    author_counts = value_counts.filter(mask)
+    valid_authors = author_counts.field('values')
+    full_mask = pc.is_in(ds.data.column('author'), value_set=valid_authors)
+    indices = np.where(full_mask.to_numpy())[0]
+    
+    return ds.select(indices)
+
+def create_train_val(filtered_chunks: Dataset, train_size, seed):
+    if train_size == 1.0:
+        print(f"Only creating train split (train_size={train_size})")
+        return filtered_chunks.shuffle(seed), None
+    
+    print(f"Creating train/val split (train_size={train_size})")
+    
+    authors = filtered_chunks.unique('author')
+
+    train_author_ids, val_author_ids = train_test_split(
+        authors,
+        train_size=train_size,
+        random_state=seed,
+    )
+
+    current_authors = filtered_chunks.data.column('author')
+    train_idx = np.where(pc.is_in(current_authors, value_set=pa.array(train_author_ids)).to_numpy())[0]
+    train_ds = filtered_chunks.select(train_idx)
+
+    val_idx = np.where(pc.is_in(current_authors, value_set=pa.array(val_author_ids)).to_numpy())[0]
+    val_ds = filtered_chunks.select(val_idx)
+
+    return train_ds, val_ds 
 
 def make_report(ds: Dataset, split: str):
     print(f"\nTotal {split} chunks: {len(ds)}")
@@ -167,63 +145,33 @@ def make_report(ds: Dataset, split: str):
 if __name__ == "__main__":
 
     CONFIG = {
-        'blog': {
-            'cleaner': None,
-            'pack': False
-        },
-        'twitter': {
-            'cleaner': clean_twitter,
-            'pack': True
-        },
-        'reddit': {
-            'cleaner': None,
-            'pack': False
-        },
-        'gutenberg': {
-            'cleaner': None,
-            'pack': False
+        'blog': {'cleaner': None, 'pack': False},
+        'twitter': {'cleaner': clean_twitter, 'pack': True},
+        'reddit': {'cleaner': None, 'pack': False},
+        'gutenberg': {'cleaner': None, 'pack': False}
         }
-    }
 
     # Define filenames
     data_files = [
-        'data/twitter_train_raw.parquet',
-        'data/twitter_test_raw.parquet'
+        'data/blogtext_raw.parquet',
     ]
 
-    source_name = 'twitter'
-    train_output = 'data/twitter_train.parquet'
+    train_size = 1.0
+    source_name = 'blogs'
+    train_output = 'data/blogtext_train.parquet'
     val_output = ''
 
-    # Load dataset
-    print('Loading dataset')
+    print('Loading dataset...')
     full_ds = load_dataset(path='parquet', data_files=data_files, split='train', features=RAW_FEATURES)
+    clean_ds = preprocess(full_ds, source_name, CONFIG)
+    tokeniser = AutoTokenizer.from_pretrained('prajjwal1/bert-tiny')
+    chunks = process(clean_ds, source_name, tokeniser, chunk_size=512)
+    filtered_chunks = filter_valid_authors(chunks)
+    train_chunks, val_chunks = create_train_val(filtered_chunks, train_size=train_size, seed=42)
 
-    # Filter for authors with more than 16 texts
-    print('Filtering authors')
-    filtered_ds = filter_valid_authors(full_ds)
-
-    # Get train/val splits
-    print('Making train/val split')
-    train_ds, val_ds = create_train_val(filtered_ds, train_size=1.0, seed=42)
-
-    # Preprocess
-    train_clean = preprocess(train_ds, source_name, CONFIG)
-
-    # Load tokeniser
-    print('Loading tokeniser')
-    tokeniser = AutoTokenizer.from_pretrained('roberta-large')
-
-    # Tokenise and chunk
-    train_chunks = process(train_clean, source_name, tokeniser, chunk_size=512)
     train_chunks.to_parquet(train_output)
-
-    # Do the same for val if necessary
-    if val_ds is not None:
-        val_clean = preprocess(val_ds, source_name, CONFIG)
-        val_chunks = process(val_clean, source_name, tokeniser, chunk_size=512)
-        val_chunks.to_parquet(val_output)
-
     make_report(train_chunks, 'train')
-    if val_ds is not None:
+
+    if val_chunks is not None:
+        val_chunks.to_parquet(val_output)
         make_report(val_chunks, 'val')
