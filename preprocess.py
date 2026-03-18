@@ -1,6 +1,7 @@
 import pyarrow.compute as pc
 import pyarrow as pa
 import numpy as np 
+from collections import defaultdict
 from sklearn.model_selection import train_test_split
 from transformers import AutoTokenizer
 from datasets import (
@@ -53,15 +54,16 @@ def preprocess(ds: Dataset, source_name, config):
             load_from_cache_file=False
             )
 
-    if conf and conf['pack']:
+    if conf and conf['pack'] and conf['sep']:
         df = ds.to_pandas()
-
-        # Sample 10,000 tweets per author (using frac=1 in case author has <10,000 tweets)
-        df = df.sample(frac=1).groupby('author').head(10000)
+        sep = conf['sep']
         
-        # Join tweets with 3 newlines
+        if source_name == 'twitter':
+            df = df.sample(frac=1).groupby('author').head(10000) # Sample 10,000 tweets per author
+        
+        # Join documents by author
         df_packed = df.groupby('author', as_index=False).agg({
-            'text': lambda x: "\n\n\n".join(x.astype(str)),
+            'text': lambda x: sep.join(x.astype(str)),
             'source': 'first',
             'doc_id': lambda x: f"packed_{x.iloc[0]}"
         })
@@ -73,7 +75,7 @@ def preprocess(ds: Dataset, source_name, config):
 
     return ds
 
-def tokenise_and_chunk(examples, tokeniser, chunk_size=512):
+def tokenise_and_chunk(examples, tokeniser, source_name:str, chunk_size=512):
 
     outputs = tokeniser(
         examples["text"],
@@ -85,15 +87,28 @@ def tokenise_and_chunk(examples, tokeniser, chunk_size=512):
 
     sample_map = outputs.pop("overflow_to_sample_mapping")
     new_batch = {k: [] for k in HF_FEATURES.keys()}
+    chunks_by_sample = defaultdict(list)
 
     for i, original_idx in enumerate(sample_map):
-        # Only keep full-sized chunks to maintain consistency
         if len(outputs["input_ids"][i]) == chunk_size:
-            new_batch["input_ids"].append(outputs["input_ids"][i])
-            new_batch["attention_mask"].append(outputs["attention_mask"][i])
-            new_batch["author"].append(examples["author"][original_idx])
-            new_batch["doc_id"].append(examples["doc_id"][original_idx])
-            new_batch["source"].append(examples["source"][original_idx])
+            chunk = {
+                'author': examples['author'][original_idx],
+                'doc_id': examples["doc_id"][original_idx],
+                'source': examples['source'][original_idx],
+                'input_ids': outputs['input_ids'][i],
+                'attention_mask': outputs['attention_mask'][i],
+            }
+            chunks_by_sample[original_idx].append(chunk)
+
+    # Edge removal for Gutenberg
+    if source_name == 'gutenberg':
+        for original_idx, chunks in chunks_by_sample.items():
+            if len(chunks) > 2:
+                chunks = chunks[1:-1]
+            
+            for chunk in chunks:
+                for k in new_batch.keys():
+                    new_batch[k].append(chunk[k])
             
     return new_batch
 
@@ -102,7 +117,7 @@ def process(ds: Dataset, source_name: str, tokeniser, chunk_size: int):
             tokenise_and_chunk,
             batched=True,
             batch_size=1000,
-            fn_kwargs={'tokeniser': tokeniser, 'chunk_size': chunk_size},
+            fn_kwargs={'tokeniser': tokeniser, 'chunk_size': chunk_size, 'source_name': source_name},
             remove_columns=ds.column_names,
             num_proc=NUM_PROC,
             desc=f"Tokenising and chunking {source_name}",
@@ -162,21 +177,21 @@ def make_report(ds: Dataset, split: str):
 if __name__ == "__main__":
 
     CONFIG = {
-        'blog': {'cleaner': None, 'pack': False},
-        'twitter': {'cleaner': clean_twitter, 'pack': True},
-        'reddit': {'cleaner': None, 'pack': False},
-        'gutenberg': {'cleaner': None, 'pack': False}
+        'blog': {'cleaner': None, 'pack': True, 'sep': "\n\n\n"},
+        'twitter': {'cleaner': clean_twitter, 'pack': True, 'sep': "\n\n\n"},
+        'reddit': {'cleaner': None, 'pack': True, 'sep': "\n\n\n"},
+        'gutenberg': {'cleaner': None, 'pack': True, 'sep': "\n\n\n"}
         }
 
     # Define filenames
     data_files = [
-        'data/reddit_raw.parquet',
+        'data/blogtext_raw.parquet',
     ]
 
-    train_size = 0.9
+    train_size = 1.0
     source_name = 'blog'
-    train_output = 'data/reddit_train.parquet'
-    val_output = 'data/reddit_val.parquet'
+    train_output = 'data/blogtext_train.parquet'
+    val_output = ''
 
     print('Loading dataset...')
     full_ds = load_dataset(path='parquet', data_files=data_files, split='train', features=RAW_FEATURES)
