@@ -58,7 +58,8 @@ def clean_dataset(ds: Dataset, source_name: str, config: dict, batch_size: int):
 
     return ds
 
-def pack_authors(ds: Dataset, source_name: str, conf: dict):
+def pack_authors(ds: Dataset, source_name: str, config: dict):
+    conf = config.get(source_name)
 
     if conf and conf['pack'] and conf['sep']:
         df = ds.to_pandas()
