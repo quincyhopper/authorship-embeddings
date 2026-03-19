@@ -116,12 +116,12 @@ def tokenise_and_chunk(examples: dict[str, list[Any]], tokeniser: Any, source_na
             new_batch["attention_mask"].append(outputs["attention_mask"][chunk_idx])
     else:
         # Keys: 'doc_idx', Values: [chunk1, chunk2, ...]
-        chunks_by_sample = defaultdict(list)
+        doc_chunk_map = defaultdict(list)
         for chunk_idx, doc_idx in enumerate(sample_map):
-            chunks_by_sample[doc_idx].append(chunk_idx)
+            doc_chunk_map[doc_idx].append(chunk_idx)
 
         # Filter gutenberg edges
-        for doc_idx, chunk_indices in chunks_by_sample.items():
+        for doc_idx, chunk_indices in doc_chunk_map.items():
             # Remove first and last chunk
             valid_indices = chunk_indices[1:-1] if len(chunk_indices) > 2 else []
             

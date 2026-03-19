@@ -6,31 +6,33 @@ from datasets import load_dataset
 from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
 
 class AuthorshipDataset(Dataset):
-    def __init__(self, dataset, view_size: int, author_list: list):
+    def __init__(self, dataset: Dataset, view_size: int, author_list: list):
 
         self.dataset = dataset
         self.view_size = view_size
-        self.author_ids = author_list
+        self.author_list = author_list
 
         # Only select author IDs to save memory
-        self.grouped_idxs = defaultdict(list)
-        for idx, author in enumerate(dataset['author']):
-            self.grouped_idxs[author].append(idx)
+        # Keys: author, Values: [chunk indices]
+        self.author_chunk_idxs = defaultdict(list)
+        for chunk_idx, author in enumerate(dataset['author']):
+            self.author_chunk_idxs[author].append(chunk_idx)
 
     def __len__(self):
-        """Used by DataLoader to know the indices to sample from."""
-        return len(self.author_ids)
+        return len(self.author_list)
     
-    def __getitem__(self, index):
-        """Called repeatedly by DataLoader to fill up a batch. 
+    def __getitem__(self, index: int):
+        """Called repeatedly by DataLoader to make a batch. 
         
         Args:
             index: index of an author in self.author_ids
+
+        Returns:
+            Dictionary where values are lists. Get passed to __call__ of AuthorshipCollator.
         """
-        author_id = self.author_ids[index]
-        chunk_idxs = self.grouped_idxs[author_id]
         
         # Sample chunks indices from this author
+        chunk_idxs = self.author_chunk_indices[index]
         sampled_idxs = random.choices(chunk_idxs, k=self.view_size)
 
         # Fetch input_ids
@@ -40,12 +42,34 @@ class AuthorshipDataset(Dataset):
         return {"label": index, "input_ids": input_ids, 'attention_mask': attention_mask}
     
 class AuthorshipCollator:
-    def __call__(self, batch):
+    def __int__(self, max_length, pad_token_id=1):
+        self.max_length = max_length
+        self.pad_token_id = pad_token_id # RoBERTa padding token ID is 1
+
+    def __call__(self, batch: list[dict]):
         labels = torch.tensor([item['label'] for item in batch])
-        input_ids = torch.tensor([item['input_ids'] for item in batch])
-        attention_mask = torch.tensor([item['attention_mask'] for item in batch])
-        
-        return input_ids, attention_mask, labels
+
+        # Pad tokens if necessary
+        padded_input_ids = []
+        padded_attention_masks = []
+        for item in batch:
+            ids = item['input_ids']
+            mask = item['attention_mask']
+            padding_needed = self.max_length - len(ids)
+            
+            # Pad inputs ids
+            padded_ids = ids + [self.pad_token_id] * padding_needed
+            padded_input_ids.append(padded_ids)
+
+            # Pad mask
+            padded_mask = mask + [0] * padding_needed
+            padded_attention_masks.append(padded_mask)
+            
+        return (
+            torch.tensor(padded_input_ids),
+            torch.tensor(padded_attention_masks),
+            labels
+        )
     
 class AuthorshipDataModule(L.LightningDataModule):
     def __init__(self, train_path, val_path, batch_size=1024, view_size=16, max_seq_len=512, num_workers=1):
