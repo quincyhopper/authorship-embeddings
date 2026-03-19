@@ -203,10 +203,10 @@ def make_report(ds: Dataset, split: str):
 if __name__ == "__main__":
 
     CONFIG = {
-        'blog': {'cleaner': None, 'pack': True, 'sep': "\n\n\n"},
+        'blog': {'cleaner': None, 'pack': False, 'sep': ""},
         'twitter': {'cleaner': clean_twitter, 'pack': True, 'sep': "\n\n\n"},
-        'reddit': {'cleaner': None, 'pack': True, 'sep': "\n\n\n"},
-        'gutenberg': {'cleaner': None, 'pack': True, 'sep': "\n\n\n"}
+        'reddit': {'cleaner': None, 'pack': False, 'sep': ""},
+        'gutenberg': {'cleaner': None, 'pack': False, 'sep': ""}
         }
 
     # Define filenames
