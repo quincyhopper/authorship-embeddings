@@ -1,6 +1,7 @@
 import pyarrow.compute as pc
 import pyarrow as pa
 import numpy as np 
+from typing import Any 
 from collections import defaultdict
 from sklearn.model_selection import train_test_split
 from transformers import AutoTokenizer
@@ -41,18 +42,23 @@ def clean_twitter(batch):
     batch['text'] = texts.to_pylist()
     return batch
 
-def preprocess(ds: Dataset, source_name, config):
+def clean_dataset(ds: Dataset, source_name: str, config: dict, batch_size: int):
     conf = config.get(source_name)
 
+    # Apply cleaning if necessary
     if conf and conf['cleaner']:
         ds = ds.map(
             conf['cleaner'], 
             batched=True, 
-            batch_size=1000, 
+            batch_size=batch_size, 
             num_proc=NUM_PROC, 
             desc=f"Cleaning {source_name}",
             load_from_cache_file=False
             )
+
+    return ds
+
+def pack_authors(ds: Dataset, source_name: str, conf: dict):
 
     if conf and conf['pack'] and conf['sep']:
         df = ds.to_pandas()
@@ -75,8 +81,20 @@ def preprocess(ds: Dataset, source_name, config):
 
     return ds
 
-def tokenise_and_chunk(examples, tokeniser, source_name:str, chunk_size=512):
+def tokenise_and_chunk(examples: dict[str, list[Any]], tokeniser: Any, source_name:str, chunk_size: int=512):
+    """
+    Args:
+        examples (Dict[str, List]): A batch from ds.map
+            Keys: 'text', 'author', 'doc_id', 'source'
+            Values: List of length batch_size
 
+    Returns:
+        new_batch (Dict[str, List]): batch of chunks instead of docs
+            Keys: 'text', 'author', 'doc_id', 'source'
+            Values: List of length batch_size
+    """
+    
+    # Dictionary of lists
     outputs = tokeniser(
         examples["text"],
         truncation=True,
@@ -84,39 +102,47 @@ def tokenise_and_chunk(examples, tokeniser, source_name:str, chunk_size=512):
         return_overflowing_tokens=True,
         stride=0
     )
-
+    
+    # List of integers where integer corresponds to the index of the original document, e.g. [0, 0, 0, 1, 2, 2, ...]
     sample_map = outputs.pop("overflow_to_sample_mapping")
-    new_batch = {k: [] for k in HF_FEATURES.keys()}
-    chunks_by_sample = defaultdict(list)
+    new_batch = {k: [] for k in ['author', 'doc_id', 'source', 'input_ids', 'attention_mask']}
 
-    for i, original_idx in enumerate(sample_map):
-        if len(outputs["input_ids"][i]) == chunk_size:
-            chunk = {
-                'author': examples['author'][original_idx],
-                'doc_id': examples["doc_id"][original_idx],
-                'source': examples['source'][original_idx],
-                'input_ids': outputs['input_ids'][i],
-                'attention_mask': outputs['attention_mask'][i],
-            }
-            chunks_by_sample[original_idx].append(chunk)
+    if source_name != 'gutenberg':
+        for chunk_idx, doc_idx in enumerate(sample_map):
+            if len(outputs["input_ids"][chunk_idx]) == chunk_size:
+                new_batch["author"].append(examples["author"][doc_idx])
+                new_batch["doc_id"].append(examples["doc_id"][doc_idx])
+                new_batch["source"].append(examples["source"][doc_idx])
+                new_batch["input_ids"].append(outputs["input_ids"][chunk_idx])
+                new_batch["attention_mask"].append(outputs["attention_mask"][chunk_idx])
+    else:
+        # Keys: 'doc_idx', Values: [chunk1, chunk2, ...]
+        chunks_by_sample = defaultdict(list)
 
-    # Edge removal for Gutenberg
-    if source_name == 'gutenberg':
-        for original_idx, chunks in chunks_by_sample.items():
-            if len(chunks) > 2:
-                chunks = chunks[1:-1]
+        # Filter small chunks
+        for chunk_idx, doc_idx in enumerate(sample_map):
+            if len(outputs["input_ids"][chunk_idx]) == chunk_size:
+                chunks_by_sample[doc_idx].append(chunk_idx)
+
+        # Filter gutenberg edges
+        for doc_idx, chunk_indices in chunks_by_sample.items():
+            # Remove first and last chunk
+            valid_indices = chunk_indices[1:-1] if len(chunk_indices) > 2 else []
             
-            for chunk in chunks:
-                for k in new_batch.keys():
-                    new_batch[k].append(chunk[k])
+            for chunk_idx in valid_indices:
+                new_batch["author"].append(examples["author"][doc_idx])
+                new_batch["doc_id"].append(examples["doc_id"][doc_idx])
+                new_batch["source"].append(examples["source"][doc_idx])
+                new_batch["input_ids"].append(outputs["input_ids"][chunk_idx])
+                new_batch["attention_mask"].append(outputs["attention_mask"][chunk_idx])
             
     return new_batch
 
-def process(ds: Dataset, source_name: str, tokeniser, chunk_size: int):
+def process(ds: Dataset, source_name: str, tokeniser: Any, chunk_size: int, batch_size: int):
         return ds.map(
             tokenise_and_chunk,
             batched=True,
-            batch_size=1000,
+            batch_size=batch_size,
             fn_kwargs={'tokeniser': tokeniser, 'chunk_size': chunk_size, 'source_name': source_name},
             remove_columns=ds.column_names,
             num_proc=NUM_PROC,
@@ -138,7 +164,7 @@ def filter_valid_authors(ds: Dataset):
     
     return ds.select(indices)
 
-def create_train_val(filtered_chunks: Dataset, train_size, seed):
+def create_train_val(filtered_chunks: Dataset, train_size: float, seed: int):
     if train_size == 1.0:
         print(f"Only creating train split (train_size={train_size})")
         return filtered_chunks.shuffle(seed), None
@@ -195,14 +221,20 @@ if __name__ == "__main__":
 
     print('Loading dataset...')
     full_ds = load_dataset(path='parquet', data_files=data_files, split='train', features=RAW_FEATURES)
-    clean_ds = preprocess(full_ds, source_name, CONFIG)
 
+    # Preprocess
+    clean_ds = clean_dataset(full_ds, source_name, CONFIG, batch_size=1000)
+    packed_ds = pack_authors(clean_ds, source_name, CONFIG)
+
+    # Tokenise
     tokeniser = AutoTokenizer.from_pretrained('roberta-large')
-    chunks = process(clean_ds, source_name, tokeniser, chunk_size=512)
+    chunks = process(packed_ds, source_name, tokeniser, chunk_size=512, batch_size=50)
 
+    # Filter authors with <16 chunks
     filtered_chunks = filter_valid_authors(chunks)
-    train_chunks, val_chunks = create_train_val(filtered_chunks, train_size=train_size, seed=42)
 
+    # Split
+    train_chunks, val_chunks = create_train_val(filtered_chunks, train_size=train_size, seed=42)
     train_chunks.to_parquet(train_output)
     make_report(train_chunks, 'train')
 
