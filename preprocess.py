@@ -109,20 +109,16 @@ def tokenise_and_chunk(examples: dict[str, list[Any]], tokeniser: Any, source_na
 
     if source_name != 'gutenberg':
         for chunk_idx, doc_idx in enumerate(sample_map):
-            if len(outputs["input_ids"][chunk_idx]) == chunk_size:
-                new_batch["author"].append(examples["author"][doc_idx])
-                new_batch["doc_id"].append(examples["doc_id"][doc_idx])
-                new_batch["source"].append(examples["source"][doc_idx])
-                new_batch["input_ids"].append(outputs["input_ids"][chunk_idx])
-                new_batch["attention_mask"].append(outputs["attention_mask"][chunk_idx])
+            new_batch["author"].append(examples["author"][doc_idx])
+            new_batch["doc_id"].append(examples["doc_id"][doc_idx])
+            new_batch["source"].append(examples["source"][doc_idx])
+            new_batch["input_ids"].append(outputs["input_ids"][chunk_idx])
+            new_batch["attention_mask"].append(outputs["attention_mask"][chunk_idx])
     else:
         # Keys: 'doc_idx', Values: [chunk1, chunk2, ...]
         chunks_by_sample = defaultdict(list)
-
-        # Filter small chunks
         for chunk_idx, doc_idx in enumerate(sample_map):
-            if len(outputs["input_ids"][chunk_idx]) == chunk_size:
-                chunks_by_sample[doc_idx].append(chunk_idx)
+            chunks_by_sample[doc_idx].append(chunk_idx)
 
         # Filter gutenberg edges
         for doc_idx, chunk_indices in chunks_by_sample.items():
