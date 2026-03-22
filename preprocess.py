@@ -212,21 +212,21 @@ def make_report(ds: Dataset, split: str):
 if __name__ == "__main__":
 
     CONFIG = {
-        'blog': {'cleaner': None, 'pack': True, 'sep': "<\\s>"},
+        'blog': {'cleaner': None, 'pack': True, 'sep': " </s> </s>"},
         'twitter': {'cleaner': clean_twitter, 'pack': True, 'sep': "\n\n\n"},
-        'reddit': {'cleaner': None, 'pack': True, 'sep': "<\\s>"},
-        'gutenberg': {'cleaner': None, 'pack': True, 'sep': "<\\s>"}
+        'reddit': {'cleaner': None, 'pack': True, 'sep': " </s> </s> "},
+        'gutenberg': {'cleaner': None, 'pack': True, 'sep': " </s> </s> "}
         }
 
     # Define filenames
     data_files = [
-        'data/blogtext_raw.parquet',
+        'data/reddit_raw.parquet',
     ]
 
-    train_size = 1.0
-    source_name = 'blog'
-    train_output = 'data/blogtext_train.parquet'
-    val_output = ''
+    train_size = 0.9
+    source_name = 'reddit'
+    train_output = 'data/reddit_train.parquet'
+    val_output = 'data/reddit_val.parquet'
 
     print('Loading dataset...')
     full_ds = load_dataset(path='parquet', data_files=data_files, split='train', features=RAW_FEATURES)
