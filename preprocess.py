@@ -45,6 +45,15 @@ def clean_twitter(batch):
 def clean_dataset(ds: Dataset, source_name: str, config: dict, batch_size: int):
     conf = config.get(source_name)
 
+    # Strip texts
+    ds = ds.map(
+        lambda x: {"text": [t.strip() for t in x["text"]]}, 
+        batched=True,
+        batch_size=batch_size,
+        num_proc=NUM_PROC,
+        desc=f"Stripping {source_name}"
+        )
+
     # Apply cleaning if necessary
     if conf and conf['cleaner']:
         ds = ds.map(
@@ -82,10 +91,10 @@ def pack_authors(ds: Dataset, source_name: str, config: dict):
 
     return ds
 
-def tokenise_and_chunk(examples: dict[str, list[Any]], tokeniser: Any, source_name:str, chunk_size: int=512):
+def tokenise_and_chunk(batch: dict[str, list[Any]], tokeniser: Any, source_name:str, chunk_size: int=512):
     """
     Args:
-        examples (Dict[str, List]): A batch from ds.map
+        batch (Dict[str, List]): A batch from ds.map
             Keys: 'text', 'author', 'doc_id', 'source'
             Values: List of length batch_size
 
@@ -97,7 +106,7 @@ def tokenise_and_chunk(examples: dict[str, list[Any]], tokeniser: Any, source_na
     
     # Dictionary of lists
     outputs = tokeniser(
-        examples["text"],
+        batch["text"],
         truncation=True,
         max_length=chunk_size,
         return_overflowing_tokens=True,
@@ -109,12 +118,15 @@ def tokenise_and_chunk(examples: dict[str, list[Any]], tokeniser: Any, source_na
     new_batch = {k: [] for k in ['author', 'doc_id', 'source', 'input_ids', 'attention_mask']}
 
     if source_name != 'gutenberg':
-        for chunk_idx, doc_idx in enumerate(sample_map):
-            new_batch["author"].append(examples["author"][doc_idx])
-            new_batch["doc_id"].append(examples["doc_id"][doc_idx])
-            new_batch["source"].append(examples["source"][doc_idx])
-            new_batch["input_ids"].append(outputs["input_ids"][chunk_idx])
-            new_batch["attention_mask"].append(outputs["attention_mask"][chunk_idx])
+        for i, input_ids in enumerate(outputs['input_ids']):
+            if len(input_ids) == 512:
+                new_batch['input_ids'].append(input_ids)
+                new_batch['attention_mask'].append(outputs['attention_mask'][i])
+
+                original_idx = sample_map[i]
+                new_batch["author"].append(batch["author"][original_idx])
+                new_batch["doc_id"].append(batch["doc_id"][original_idx])
+                new_batch["source"].append(batch["source"][original_idx])
     else:
         # Keys: 'doc_idx', Values: [chunk1, chunk2, ...]
         doc_chunk_map = defaultdict(list)
@@ -127,9 +139,9 @@ def tokenise_and_chunk(examples: dict[str, list[Any]], tokeniser: Any, source_na
             valid_indices = chunk_indices[1:-1] if len(chunk_indices) > 2 else []
             
             for chunk_idx in valid_indices:
-                new_batch["author"].append(examples["author"][doc_idx])
-                new_batch["doc_id"].append(examples["doc_id"][doc_idx])
-                new_batch["source"].append(examples["source"][doc_idx])
+                new_batch["author"].append(batch["author"][doc_idx])
+                new_batch["doc_id"].append(batch["doc_id"][doc_idx])
+                new_batch["source"].append(batch["source"][doc_idx])
                 new_batch["input_ids"].append(outputs["input_ids"][chunk_idx])
                 new_batch["attention_mask"].append(outputs["attention_mask"][chunk_idx])
             
@@ -200,10 +212,10 @@ def make_report(ds: Dataset, split: str):
 if __name__ == "__main__":
 
     CONFIG = {
-        'blog': {'cleaner': None, 'pack': False, 'sep': ""},
+        'blog': {'cleaner': None, 'pack': True, 'sep': "<s>"},
         'twitter': {'cleaner': clean_twitter, 'pack': True, 'sep': "\n\n\n"},
-        'reddit': {'cleaner': None, 'pack': False, 'sep': ""},
-        'gutenberg': {'cleaner': None, 'pack': False, 'sep': ""}
+        'reddit': {'cleaner': None, 'pack': False, 'sep': "<s>"},
+        'gutenberg': {'cleaner': None, 'pack': False, 'sep': "<s>"}
         }
 
     # Define filenames
