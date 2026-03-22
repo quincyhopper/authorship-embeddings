@@ -207,14 +207,14 @@ def make_report(ds: Dataset, split: str):
     print(f"\nTotal {split} chunks: {len(ds)}")
     print(f"Total {split} unique authors: {len(ds.unique('author'))}")
 
-if __name__ == "__main__":
-
-    CONFIG = {
+CONFIG = {
         'blog': {'cleaner': None, 'pack': True, 'sep': " </s> </s> "},
         'twitter': {'cleaner': clean_twitter, 'pack': True, 'sep': "\n\n\n"},
         'reddit': {'cleaner': None, 'pack': True, 'sep': " </s> </s> "},
         'gutenberg': {'cleaner': None, 'pack': True, 'sep': " </s> </s> "}
         }
+
+if __name__ == "__main__":
 
     # Define filenames
     data_files = [
