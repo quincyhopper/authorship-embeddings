@@ -14,8 +14,6 @@ from datasets import (
     Dataset
     )
 
-disable_caching()
-
 RAW_FEATURES = Features({
     "author": Value("string"),
     "text": Value("string"),
