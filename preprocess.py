@@ -212,10 +212,10 @@ def make_report(ds: Dataset, split: str):
 if __name__ == "__main__":
 
     CONFIG = {
-        'blog': {'cleaner': None, 'pack': True, 'sep': "<s>"},
+        'blog': {'cleaner': None, 'pack': True, 'sep': "<\\s>"},
         'twitter': {'cleaner': clean_twitter, 'pack': True, 'sep': "\n\n\n"},
-        'reddit': {'cleaner': None, 'pack': False, 'sep': "<s>"},
-        'gutenberg': {'cleaner': None, 'pack': False, 'sep': "<s>"}
+        'reddit': {'cleaner': None, 'pack': False, 'sep': "<\\s>"},
+        'gutenberg': {'cleaner': None, 'pack': False, 'sep': "<\\s>"}
         }
 
     # Define filenames
