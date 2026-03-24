@@ -29,7 +29,7 @@ def log_memory(label=""):
 
 def sort_parquet(src: str, dst: str, row_group_size: int):
     duckdb.sql(f"""
-        COPY (SELECT * FROM read_parquet('{src}') ORDER BY author)
+        COPY (SELECT * FROM read_parquet('{src}') WHERE author != ['deleted'] AND author != 'None' ORDER BY author)
         TO '{dst}' (FORMAT parquet, ROW_GROUP_SIZE {row_group_size}, COMPRESSION snappy)
     """)
 
@@ -75,11 +75,6 @@ def stream_tokenized_to_parquet(
         # Fill dict of authors and their texts
         for author, text in zip(authors_col, texts_col):
             author = str(author)
-
-            # Skip [deleted] author in Reddit
-            if author == '[deleted]' or author == "None":
-                continue
-
             if author not in author_texts:
                 current_author_order.append(author)
             author_texts[author].append(text)
