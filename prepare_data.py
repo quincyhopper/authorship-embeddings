@@ -15,7 +15,7 @@ MIN_CHUNKS       = 16
 AUTHOR_BATCH     = 200
 ROW_GROUP_SIZE   = 50_000
 
-def sort_parquet_duck(src: str, dst: str, row_group_size: int):
+def sort_parquet(src: str, dst: str, row_group_size: int):
     duckdb.sql(f"""
         COPY (SELECT * FROM read_parquet('{src}') ORDER BY author)
         TO '{dst}' (FORMAT parquet, ROW_GROUP_SIZE {row_group_size}, COMPRESSION snappy)
@@ -29,16 +29,30 @@ def stream_tokenized_to_parquet(
         chunk_len: int = CHUNK_LEN,
         min_chunks: int = MIN_CHUNKS,
 ):
+    
+    # Load the sorted dataset
     pf = pq.ParquetFile(sorted_file)
+
+    # Init writer to None; will be assigned in the first tokenise call and then reused
     writer = None
     
+    # Prepare dict of authors and their texts
     author_texts: dict[str, list[str]] = defaultdict(list)
+
+    # Prepare list of authors
     current_author_order: list[str] = []
+
+    # Extract information from sorted list
     total_row_groups = pf.metadata.num_row_groups
-    rows_done = 0
     total_rows = pf.metadata.num_rows
 
+    # Init counter for batches
+    rows_done = 0
+
+    # Loop over ROW_GROUP_SIZE rows
     for rg_idx in range(total_row_groups):
+
+        # Read batch
         rg = pf.read_row_group(rg_idx, columns=['author', 'text'])
 
         # Get authors and texts
@@ -46,36 +60,48 @@ def stream_tokenized_to_parquet(
         texts_col = rg.column('text').to_pylist()
         del rg; gc.collect()
 
-        # Build author-text dict
+        # Fill dict of authors and their texts
         for author, text in zip(authors_col, texts_col):
             author = str(author)
+            author_texts[author].append(text)
+
+            # Fill list of authors
             if author not in author_texts:
                 current_author_order.append(author)
-            author_texts[author].append(text)
 
         del authors_col, texts_col
 
-        # Check for stragglers for last author
+        # Define last author
         last_author = current_author_order[-1] if current_author_order else None
 
-        # Authors to flush - all but last one (may continue next rg)
+        # Authors to procces; ignore last author since some of their texts might be in the next batch
         authors_done = [a for a in current_author_order if a != last_author]
 
+        # Print information about current batch
         rows_done += pf.metadata.row_group(rg_idx).num_rows
         print(f"Row-group {rg_idx+1}/{total_row_groups}  "
               f"({rows_done:,}/{total_rows:,} rows)  "
-              f"flushing {len(authors_done)} authors…", flush=True)
+              f"processing {len(authors_done)} authors…", flush=True)
         
+        # Loop over all authors in this row group
         for start in range(0, len(authors_done), AUTHOR_BATCH):
+
+            # Slice AUTHOR_BATCH authors
             batch = authors_done[start : start + AUTHOR_BATCH]
+
+            # Tokenise 
             writer = tokenise_and_chunk(batch, writer, author_texts, tokenizer)
+
+            # Cleanup
             for a in batch: 
                 del author_texts[str(a)]
             gc.collect()
 
+        #  Add last author to next batch if exists
         current_author_order = [last_author] if last_author else []
         gc.collect()
 
+    # Tokenise all of last authors texts regardless of whether they're in this row group
     if current_author_order:
         writer = tokenise_and_chunk(current_author_order, writer, author_texts, tokenizer)
 
@@ -126,6 +152,7 @@ def tokenise_and_chunk(batch: list[str], writer, author_texts: dict[str, list[st
     if not final_authors:
         return writer
     
+    # Define table to write to the output file
     table = pa.table({
         "author":         [str(a) for a in final_authors],
         "source":         ["blog"] * len(final_authors),
@@ -133,6 +160,7 @@ def tokenise_and_chunk(batch: list[str], writer, author_texts: dict[str, list[st
         "attention_mask": final_masks,
     })
 
+    # Define writer if this is the first batch
     if writer is None:
         writer = pq.ParquetWriter(OUTPUT_FILE, table.schema, compression="snappy")
 
@@ -145,7 +173,7 @@ if __name__ == "__main__":
 
     # Sort dataset
     print('Sorting dataset', flush=True)
-    sort_parquet_duck(src=INPUT_FILE, dst=SORTED_FILE, row_group_size=ROW_GROUP_SIZE)
+    sort_parquet(src=INPUT_FILE, dst=SORTED_FILE, row_group_size=ROW_GROUP_SIZE)
 
     # Load tokenizer
     print('Loading tokenizer', flush=True)
