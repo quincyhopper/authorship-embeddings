@@ -7,4 +7,5 @@ __pycache__/
 *.txt
 misc/
 *.md
-data/
+data/*
+!data/scripts/
