@@ -69,7 +69,7 @@ def stream_tokenized_to_parquet(sorted_ds, output_file, tokenizer, batch_size=50
             print(f"Skipping batch - no authors with >= 16 chunks")
             continue
 
-        # 3. Convert to Arrow Table
+        # Convert to Arrow Table
         table_data = {
             'author': [str(author) for author in final_authors],
             'source': ['blog'] * len(final_authors),
@@ -82,7 +82,7 @@ def stream_tokenized_to_parquet(sorted_ds, output_file, tokenizer, batch_size=50
         if writer is None:
             writer = pq.ParquetWriter(output_file, table.schema, compression='snappy')
         
-        # 4. Write to Parquet and clear RAM
+        # Write to Parquet and clear RAM
         writer.write_table(table)
         
         # Explicit Cleanup
