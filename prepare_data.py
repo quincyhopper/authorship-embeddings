@@ -3,6 +3,7 @@ import pyarrow.parquet as pq
 import pyarrow.compute as pc
 import gc
 import duckdb
+import tracemalloc
 from collections import Counter, defaultdict
 from transformers import AutoTokenizer
 
@@ -12,8 +13,19 @@ OUTPUT_FILE      = "data/reddit_chunks.parquet"
 MODEL_NAME       = "roberta-large"
 CHUNK_LEN        = 512
 MIN_CHUNKS       = 16
-AUTHOR_BATCH     = 200
+AUTHOR_BATCH     = 1000
 ROW_GROUP_SIZE   = 50_000
+
+def log_memory(label=""):
+    current, peak = tracemalloc.get_traced_memory()
+
+    current_mb = current / 10**6
+    peak_mb = peak / 10**6
+
+    print(f"--- MEMORY USAGE [{label}] ---")
+    print(f"Current: {current_mb:.2f} MB")
+    print(f"Peak:    {peak_mb:.2f} MB")
+    print("-" * 30)
 
 def sort_parquet(src: str, dst: str, row_group_size: int):
     duckdb.sql(f"""
@@ -63,11 +75,20 @@ def stream_tokenized_to_parquet(
         # Fill dict of authors and their texts
         for author, text in zip(authors_col, texts_col):
             author = str(author)
-            author_texts[author].append(text)
 
-            # Fill list of authors
+            # Skip [deleted] author in Reddit
+            if author == '[deleted]' or author == "None":
+                continue
+
             if author not in author_texts:
                 current_author_order.append(author)
+            author_texts[author].append(text)
+
+            # If single author gets too many posts, process them immediately
+            if len(author_texts[author]) >= 2000:
+                print(f"--- Flushing partial data for prolific author: {author} ---")
+                writer = tokenise_and_chunk([author], writer, author_texts, tokenizer)
+                author_texts[author] = [] # Clear memory
 
         del authors_col, texts_col
 
@@ -77,11 +98,13 @@ def stream_tokenized_to_parquet(
         # Authors to procces; ignore last author since some of their texts might be in the next batch
         authors_done = [a for a in current_author_order if a != last_author]
 
+        log_memory(f"stream_tokenized_to_parquet: Organising rows {rg_idx}")
+
         # Print information about current batch
         rows_done += pf.metadata.row_group(rg_idx).num_rows
-        print(f"Row-group {rg_idx+1}/{total_row_groups}  "
+        print(f"\nRow-group {rg_idx+1}/{total_row_groups}  "
               f"({rows_done:,}/{total_rows:,} rows)  "
-              f"processing {len(authors_done)} authors…", flush=True)
+              f"processing {len(authors_done)} authors…\n", flush=True)
         
         # Loop over all authors in this row group
         for start in range(0, len(authors_done), AUTHOR_BATCH):
@@ -113,8 +136,12 @@ def tokenise_and_chunk(batch: list[str], writer, author_texts: dict[str, list[st
     if not batch:
         return writer
     
+    log_memory("tokenise_and_chunk: Pre-text joining")
+    
     # Join the texts of the authors in this batch
     batch_texts = [" </s> </s> ".join(author_texts[a]) for a in batch]
+
+    log_memory("tokenise_and_chunk: Post-text joining/pre-tokenisation")
 
     # Tokenise batch
     tokens = tokenizer(
@@ -125,6 +152,8 @@ def tokenise_and_chunk(batch: list[str], writer, author_texts: dict[str, list[st
         padding=False
         )
     sample_map = tokens['overflow_to_sample_mapping']
+
+    log_memory("tokenise_and_chunk: Post-tokenisation")
 
     # Get indices of chunks that are exactly 512 tokens
     # Store as list of (chunk_idx, author_idx)
@@ -148,6 +177,8 @@ def tokenise_and_chunk(batch: list[str], writer, author_texts: dict[str, list[st
     # Clear tokeniser output
     del tokens, valid, author_counts, batch_texts; gc.collect()
 
+    log_memory("tokenise_and_chunk: Post-final lists")
+
     # If no authors passed filtering, do nothing
     if not final_authors:
         return writer
@@ -167,17 +198,27 @@ def tokenise_and_chunk(batch: list[str], writer, author_texts: dict[str, list[st
     # Write to parquet file
     writer.write_table(table)
     del table, final_authors, final_ids, final_masks; gc.collect()
+
+    log_memory('tokenise_and_chunk: Post-writing')
+
     return writer
 
 if __name__ == "__main__":
+    tracemalloc.start()
+
+    log_memory("Pre-sorting")
 
     # Sort dataset
     print('Sorting dataset', flush=True)
     sort_parquet(src=INPUT_FILE, dst=SORTED_FILE, row_group_size=ROW_GROUP_SIZE)
 
+    log_memory("Post-sorting")
+
     # Load tokenizer
     print('Loading tokenizer', flush=True)
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+
+    log_memory('Post loading tokenizer')
 
     print("Processing...")
     stream_tokenized_to_parquet(
