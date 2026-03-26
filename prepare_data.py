@@ -7,6 +7,7 @@ import tracemalloc
 from collections import Counter, defaultdict
 from transformers import AutoTokenizer
 
+SOURCE           = 'reddit'
 INPUT_FILE       = "data/reddit_raw.parquet"
 SORTED_FILE      = "data/reddit_sorted.parquet"   # intermediate; delete after run
 OUTPUT_FILE      = "data/reddit_chunks.parquet"
@@ -29,7 +30,7 @@ def log_memory(label=""):
 
 def sort_parquet(src: str, dst: str, row_group_size: int):
     duckdb.sql(f"""
-        COPY (SELECT * FROM read_parquet('{src}') WHERE author != ['deleted'] AND author != 'None' ORDER BY author)
+        COPY (SELECT * FROM read_parquet('{src}') ORDER BY author)
         TO '{dst}' (FORMAT parquet, ROW_GROUP_SIZE {row_group_size}, COMPRESSION snappy)
     """)
 
@@ -75,6 +76,11 @@ def stream_tokenized_to_parquet(
         # Fill dict of authors and their texts
         for author, text in zip(authors_col, texts_col):
             author = str(author)
+
+            # Ignore [deleted] authors in reddit
+            if author == '[deleted]' or author == 'None':
+                continue
+
             if author not in author_texts:
                 current_author_order.append(author)
             author_texts[author].append(text)
@@ -181,7 +187,7 @@ def tokenise_and_chunk(batch: list[str], writer, author_texts: dict[str, list[st
     # Define table to write to the output file
     table = pa.table({
         "author":         [str(a) for a in final_authors],
-        "source":         ["blog"] * len(final_authors),
+        "source":         [SOURCE] * len(final_authors),
         "input_ids":      final_ids,
         "attention_mask": final_masks,
     })
