@@ -6,6 +6,5 @@ __pycache__/
 *.slurm
 *.txt
 misc/
-*.md
 data/*
 !data/scripts/
