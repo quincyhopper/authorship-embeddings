@@ -7,7 +7,7 @@ from data_builder import AuthorshipDataModule
 torch.set_float32_matmul_precision('medium')
 
 MODEL_CODE = 'roberta-large'
-MAX_EPOCHS = 1
+MAX_STEPS = 3000
 GLOBAL_BATCH_SIZE = 1024
 VIEW_SIZE = 16
 MAX_SEQ_LEN = 512
@@ -48,7 +48,7 @@ if __name__ == "__main__":
 
     # Init Lightning Trainer
     trainer = L.Trainer(
-        max_epochs=MAX_EPOCHS,
+        max_steps=MAX_STEPS,
         accelerator="gpu",
         devices=4,
         strategy='ddp_find_unused_parameters_true',
@@ -62,7 +62,6 @@ if __name__ == "__main__":
     # Init trainer
     model = ContrastiveTrainer(MODEL_CODE, 
                                lr=1e-5, 
-                               epochs=MAX_EPOCHS, 
                                minibatch_size=MINIBATCH_SIZE,
                                weight_decay=0.01,
                                )

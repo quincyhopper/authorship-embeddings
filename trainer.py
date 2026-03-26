@@ -8,14 +8,12 @@ class ContrastiveTrainer(L.LightningModule):
     def __init__(self, 
                  model_code, 
                  lr=1e-5, 
-                 epochs=1, 
                  minibatch_size=8,
                  weight_decay=0.01):
         super().__init__()
 
         self.model = ModelWrapper(model_code)
         self.lr = lr
-        self.epochs = epochs
         self.minibatch_size = minibatch_size
         self.weight_decay = weight_decay
         self.loss_func = SupConLoss(temperature=.07)
