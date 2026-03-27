@@ -32,7 +32,7 @@ class AuthorshipDataset(Dataset):
         """
         
         # Sample chunks indices from this author
-        chunk_idxs = self.author_chunk_indices[index]
+        chunk_idxs = self.author_chunk_idxs[index]
         sampled_idxs = random.choices(chunk_idxs, k=self.view_size)
 
         # Fetch input_ids
