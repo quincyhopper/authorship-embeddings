@@ -1,10 +1,10 @@
 import glob
 import os
 import pyarrow.parquet as pq
-import pyarrow.lib
+import pyarrow
 
 if __name__ == "__main__":
-    data_dir = "data"
+    data_dir = ".."
     raw_files = glob.glob(os.path.join(data_dir, "*raw.parquet"))
     
     results = {}
