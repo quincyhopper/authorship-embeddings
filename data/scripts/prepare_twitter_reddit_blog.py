@@ -30,6 +30,14 @@ HF_FEATURES = Features({
 
 NUM_PROC = 4
 
+def clean_reddit(batch):
+    """Remove '[deleted]' authors"""
+    table = pa.Table.from_pydict(batch)
+    mask = pc.not_equal(table.column('author'), "[deleted]")
+    filtered_table = table.filter(mask)
+    
+    return filtered_table.to_pydict()
+
 def clean_twitter(batch):
 
     texts = pa.array(batch['text'])
@@ -209,7 +217,7 @@ def make_report(ds: Dataset, split: str):
 CONFIG = {
         'blog': {'cleaner': None, 'pack': True, 'sep': " </s> </s> "},
         'twitter': {'cleaner': clean_twitter, 'pack': True, 'sep': "\n\n\n"},
-        'reddit': {'cleaner': None, 'pack': True, 'sep': " </s> </s> "},
+        'reddit': {'cleaner': clean_reddit, 'pack': True, 'sep': " </s> </s> "},
         'gutenberg': {'cleaner': None, 'pack': True, 'sep': " </s> </s> "}
         }
 
@@ -217,14 +225,13 @@ if __name__ == "__main__":
 
     # Define filenames
     data_files = [
-        'data/twitter_train_raw.parquet',
-        'data/twitter_test_raw.parquet',
+        '../reddit_raw.parquet',
     ]
 
-    train_size = 1.0
-    source_name = 'twitter'
-    train_output = 'data/twitter_train.parquet'
-    val_output = ''
+    train_size = 0.9
+    source_name = 'reddit'
+    train_output = '../reddit_train.parquet'
+    val_output = '../reddit_val.parquet'
 
     print('Loading dataset...')
     full_ds = load_dataset(path='parquet', data_files=data_files, split='train', features=RAW_FEATURES)
