@@ -24,7 +24,7 @@ HF_FEATURES = Features({
     "author": Value("string"),
     "doc_id": Value("string"),
     "source": Value("string"),
-    "input_ids": Sequence(Value("int32")),
+    "input_ids": Sequence(Value("uint16")),
     "attention_mask": Sequence(Value("int8")),
     })
 
@@ -225,13 +225,13 @@ if __name__ == "__main__":
 
     # Define filenames
     data_files = [
-        '../reddit_raw.parquet',
+        'data/blogtext_raw.parquet',
     ]
 
     train_size = 0.9
-    source_name = 'reddit'
-    train_output = '../reddit_train.parquet'
-    val_output = '../reddit_val.parquet'
+    source_name = 'blogs'
+    train_output = 'data/blogtext_train.parquet'
+    val_output = 'data/blogtext_val.parquet'
 
     print('Loading dataset...')
     full_ds = load_dataset(path='parquet', data_files=data_files, split='train', features=RAW_FEATURES)
