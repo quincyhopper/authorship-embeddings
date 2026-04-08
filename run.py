@@ -14,7 +14,7 @@ MINIBATCH_SIZE = 48
 LR = 1e-2
 WEIGHT_DECAY = 1e-4
 WARMUP_STEPS = 180
-NUM_WORKERES = 0
+NUM_WORKERS = 0
 
 TRAIN_PATH = [
     'data/reddit_train.parquet',
@@ -38,6 +38,7 @@ if __name__ == "__main__":
     )
 
     # Init early stoppping
+    # TODO: Patience 10 means early stoping triggers after 500 steps without improvement
     early_stopping_callback = EarlyStopping(
         monitor='val_loss',
         patience=10,
@@ -56,7 +57,7 @@ if __name__ == "__main__":
                                        batch_size=GLOBAL_BATCH_SIZE, 
                                        view_size=VIEW_SIZE,
                                        max_seq_len=MAX_SEQ_LEN,
-                                       num_workers=NUM_WORKERES
+                                       num_workers=NUM_WORKERS
                                        )
 
     # Init Lightning Trainer
