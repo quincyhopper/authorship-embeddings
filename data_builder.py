@@ -43,34 +43,11 @@ class AuthorshipDataset(Dataset):
         return {"label": index, "input_ids": input_ids, 'attention_mask': attention_mask}
     
 class AuthorshipCollator:
-    def __init__(self, max_length, pad_token_id=1):
-        self.max_length = max_length
-        self.pad_token_id = pad_token_id # RoBERTa padding token ID is 1
-
     def __call__(self, batch: list[dict]):
-        labels = torch.tensor([item['label'] for item in batch])
-
-        # Pad tokens if necessary
-        padded_input_ids = []
-        padded_attention_masks = []
-        for item in batch:
-            ids = item['input_ids']
-            mask = item['attention_mask']
-            padding_needed = self.max_length - len(ids)
-            
-            # Pad inputs ids
-            padded_ids = ids + [self.pad_token_id] * padding_needed
-            padded_input_ids.append(padded_ids)
-
-            # Pad mask
-            padded_mask = mask + [0] * padding_needed
-            padded_attention_masks.append(padded_mask)
-            
-        return (
-            torch.tensor(padded_input_ids),
-            torch.tensor(padded_attention_masks),
-            labels
-        )
+        labels = torch.tensor([item['label'] for item in batch], dtype=torch.long)
+        input_ids = torch.stack([torch.as_tensor(item['input_ids']) for item in batch])
+        attention_mask = torch.stack([torch.as_tensor(item['attention_mask']) for item in batch])
+        return input_ids, attention_mask, labels
     
 class AuthorshipDataModule(L.LightningDataModule):
     def __init__(self, train_path, val_path, batch_size=1024, view_size=16, max_seq_len=512, num_workers=1):
@@ -132,7 +109,7 @@ class AuthorshipDataModule(L.LightningDataModule):
             self.train_ds, 
             batch_size=self.batch_size, 
             sampler=sampler,
-            collate_fn=AuthorshipCollator(max_length=self.max_seq_len), 
+            collate_fn=AuthorshipCollator(), 
             num_workers=self.num_workers, 
             drop_last=True
             )
@@ -142,5 +119,5 @@ class AuthorshipDataModule(L.LightningDataModule):
             self.val_ds, 
             batch_size=self.batch_size, 
             shuffle=False,
-            collate_fn=AuthorshipCollator(max_length=self.max_seq_len), 
+            collate_fn=AuthorshipCollator(), 
             )
