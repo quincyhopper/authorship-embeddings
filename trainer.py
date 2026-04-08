@@ -9,13 +9,15 @@ class ContrastiveTrainer(L.LightningModule):
                  model_code, 
                  lr=1e-5, 
                  minibatch_size=8,
-                 weight_decay=0.01):
+                 weight_decay=0.01,
+                 warmup_steps=180):
         super().__init__()
 
         self.model = ModelWrapper(model_code)
         self.lr = lr
         self.minibatch_size = minibatch_size
         self.weight_decay = weight_decay
+        self.warmup_steps = warmup_steps
         self.loss_func = SupConLoss(temperature=.07)
         self.save_hyperparameters()
 
@@ -31,11 +33,10 @@ class ContrastiveTrainer(L.LightningModule):
         
         # Define total steps and warmup steps
         total_steps = self.trainer.estimated_stepping_batches
-        warmup_steps = 180
 
         scheduler = get_linear_schedule_with_warmup(
             optimizer=optimizer,
-            num_warmup_steps=warmup_steps,
+            num_warmup_steps=self.warmup_steps,
             num_training_steps=total_steps
             )
 
