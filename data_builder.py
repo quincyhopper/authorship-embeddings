@@ -32,7 +32,8 @@ class AuthorshipDataset(Dataset):
         """
         
         # Sample chunks indices from this author
-        chunk_idxs = self.author_chunk_idxs[index]
+        author = self.author_list[index]
+        chunk_idxs = self.author_chunk_idxs[author]
         sampled_idxs = random.choices(chunk_idxs, k=self.view_size)
 
         # Fetch input_ids
@@ -42,7 +43,7 @@ class AuthorshipDataset(Dataset):
         return {"label": index, "input_ids": input_ids, 'attention_mask': attention_mask}
     
 class AuthorshipCollator:
-    def __int__(self, max_length, pad_token_id=1):
+    def __init__(self, max_length, pad_token_id=1):
         self.max_length = max_length
         self.pad_token_id = pad_token_id # RoBERTa padding token ID is 1
 
@@ -131,7 +132,7 @@ class AuthorshipDataModule(L.LightningDataModule):
             self.train_ds, 
             batch_size=self.batch_size, 
             sampler=sampler,
-            collate_fn=AuthorshipCollator(), 
+            collate_fn=AuthorshipCollator(max_length=self.max_seq_len), 
             num_workers=self.num_workers, 
             drop_last=True
             )
@@ -141,5 +142,5 @@ class AuthorshipDataModule(L.LightningDataModule):
             self.val_ds, 
             batch_size=self.batch_size, 
             shuffle=False,
-            collate_fn=AuthorshipCollator(), 
+            collate_fn=AuthorshipCollator(max_length=self.max_seq_len), 
             )
