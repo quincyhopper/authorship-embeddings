@@ -14,7 +14,7 @@ MINIBATCH_SIZE = 48
 LR = 1e-2
 WEIGHT_DECAY = 1e-4
 WARMUP_STEPS = 180
-NUM_WORKERS = 0
+NUM_WORKERS = 2
 
 TRAIN_PATH = [
     'data/reddit_train.parquet',
@@ -70,7 +70,7 @@ if __name__ == "__main__":
         callbacks=[checkpoint_callback, early_stopping_callback],
         logger=wandb_logger,
         log_every_n_steps=1,
-        val_check_interval=50
+        check_val_every_n_epoch=1 # Perform validation once per epoch
     )
 
     # Init trainer
