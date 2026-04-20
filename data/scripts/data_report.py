@@ -4,7 +4,9 @@ import pyarrow.parquet as pq
 import pyarrow.lib
 
 if __name__ == "__main__":
-    data_dir = "data"
+
+    script_dir = os.path.dirname(os.path.abspath(__file__)) # Path to current script
+    data_dir = os.path.join(script_dir, "..")
     raw_files = glob.glob(os.path.join(data_dir, "*raw.parquet"))
     
     results = {}
