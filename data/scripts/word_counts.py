@@ -67,21 +67,21 @@ if __name__ == "__main__":
     data_dir = Path(__file__).resolve().parent.parent
     
     base_files = [
-        data_dir / 'blogtext_raw.parquet',
-        data_dir / 'reddit_raw.parquet',
-        data_dir / 'gutenberg_raw.parquet'
+        str(data_dir / 'blogtext_raw.parquet'),
+        str(data_dir / 'reddit_raw.parquet'),
+        str(data_dir / 'gutenberg_raw.parquet')
     ]
 
     twitter_files = [
-        data_dir / 'twitter_train_raw.parquet',
-        data_dir / 'twitter_test_raw.parquet'
+        str(data_dir / 'twitter_train_raw.parquet'),
+        str(data_dir / 'twitter_test_raw.parquet')
     ]
 
     # Load separately so we can apply cleaning only to Twitter
     ds_base = load_dataset(path='parquet', data_files=base_files, split='train', features=RAW_FEATURES, streaming=True)
     ds_twitter = load_dataset(path='parquet', data_files=twitter_files, split='train', features=RAW_FEATURES, streaming=True)
     ds_twitter = ds_twitter.map(clean_twitter, batched=True, batch_size=10000)
-    final_ds = interleave_datasets([ds_base, ds_twitter])
+    final_ds = interleave_datasets([ds_base, ds_twitter], stopping_strategy='all_exhausted_without_replacement')
 
     tokenizer = AutoTokenizer.from_pretrained('roberta-large')
     tokenizer.add_special_tokens({'additional_special_tokens': ["<u>", "<h>"]}) # Add special tokens for Twitter
