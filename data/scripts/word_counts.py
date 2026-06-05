@@ -43,7 +43,8 @@ def count_words_in_stream(streaming_ds, tokenizer, total_rows: int, batch_size=2
 
             for w_id, (start, end) in word_to_bounds.items():
                 word_str = text[start:end].strip().lower()
-                global_word_counts[word_str] += 1
+                if word_str:
+                    global_word_counts[word_str] += 1
                 
         if batch_idx % 1000 == 0:
             gc.collect()
@@ -102,6 +103,7 @@ if __name__ == "__main__":
     tokenizer.add_special_tokens({'additional_special_tokens': ["<u>", "<h>"]}) # Add special tokens for Twitter
     
     word_counts = count_words_in_stream(final_ds, tokenizer, total_rows=total_rows, batch_size=256)
-    with open('word_counts.json', 'w') as f:
+    output_path = str(data_dir / 'word_counts.json')
+    with open(output_path, 'w') as f:
         json.dump(word_counts, f)
 
