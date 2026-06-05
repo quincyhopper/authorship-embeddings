@@ -43,7 +43,7 @@ def count_words_in_stream(streaming_ds, tokenizer, total_rows: int, batch_size=2
 
             for w_id, (start, end) in word_to_bounds.items():
                 word_str = text[start:end].strip().lower()
-                if word_str:
+                if word_str and any(char.isalpha() for char in word_str): # "3rd" gets counted but numbers by themselves don't
                     global_word_counts[word_str] += 1
                 
         if batch_idx % 1000 == 0:
