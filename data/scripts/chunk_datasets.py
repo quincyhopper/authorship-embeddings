@@ -39,6 +39,7 @@ HF_FEATURES = Features({
     })
 
 NUM_PROC = 4
+SEED = "42"
 
 def clean_twitter(batch):
     """Anonymise usernames and URLs in Twitter rows."""
@@ -57,23 +58,25 @@ def pack_authors_to_disk(source_name: str, settings: dict, data_dir: Path) -> Pa
 
         Reddit corpus: ordered by author, '[deleted]' and 'None' authors are removed.
 
-        Blog and gutenberg: ordered by author.
+        Gutenberg corpus: ordered by author, sample 1,270 authors.
+
+        Blog corpus: ordered by author.
     """
     output_tmp_path = data_dir / f"{source_name}_packed_tmp.parquet"
-
+ 
     input_files_str = ", ".join([f"'{str(data_dir / f)}'" for f in settings['files']])
     sep = settings['sep']
-
+ 
     print(f"    Executing on-disk author packing via DuckDB for {source_name}...")
-
+ 
     con = duckdb.connect()
-
+ 
     if source_name == 'twitter':
         con.execute(f"""
             COPY (
                 WITH ranked_tweets AS (
                     SELECT author, text, doc_id, source,
-                           row_number() OVER (PARTITION BY author ORDER BY random()) as rn
+                           row_number() OVER (PARTITION BY author ORDER BY hash(doc_id || '{SEED}')) as rn
                     FROM read_parquet([{input_files_str}])
                 )
                 SELECT author,
@@ -98,6 +101,21 @@ def pack_authors_to_disk(source_name: str, settings: dict, data_dir: Path) -> Pa
             ) TO '{str(output_tmp_path)}' (FORMAT parquet, COMPRESSION snappy);
         """)
     else:
+        sample_n = settings.get('sample_authors')
+        if sample_n:
+            author_filter = f"""WHERE author IS NOT NULL
+                  AND author IN (
+                      SELECT author FROM (
+                          SELECT DISTINCT author
+                          FROM read_parquet([{input_files_str}])
+                          WHERE author IS NOT NULL
+                      )
+                      ORDER BY hash(author || '{SEED}')
+                      LIMIT {sample_n}
+                  )"""
+        else:
+            author_filter = "WHERE author IS NOT NULL"
+ 
         con.execute(f"""
             COPY (
                 SELECT author,
@@ -105,11 +123,11 @@ def pack_authors_to_disk(source_name: str, settings: dict, data_dir: Path) -> Pa
                        'packed_' || min(doc_id) as doc_id,
                        '{source_name}' as source
                 FROM read_parquet([{input_files_str}])
-                WHERE author IS NOT NULL
+                {author_filter}
                 GROUP BY author
             ) TO '{str(output_tmp_path)}' (FORMAT parquet, COMPRESSION snappy);
         """)
-
+ 
     con.close()
     return output_tmp_path
 
@@ -191,7 +209,7 @@ CONFIG = {
     'blog':      {'pack': True, 'sep': " </s> </s> ", 'files': ["blogtext_raw.parquet"], 'batch_size': 256},
     'twitter':   {'pack': True, 'sep': "\n\n\n",      'files': ["twitter_train_raw.parquet", "twitter_test_raw.parquet"], 'batch_size': 256},
     'reddit':    {'pack': True, 'sep': " </s> </s> ", 'files': ["reddit_raw.parquet"], 'batch_size': 256},
-    'gutenberg': {'pack': True, 'sep': " </s> </s> ", 'files': ["gutenberg_raw.parquet"], 'batch_size': 8},
+    'gutenberg': {'pack': True, 'sep': " </s> </s> ", 'files': ["gutenberg_raw.parquet"], 'batch_size': 8, 'sample_authors': 1270},
 }
 
 if __name__ == "__main__":
