@@ -27,6 +27,8 @@ from concurrent.futures import ProcessPoolExecutor, wait, as_completed, FIRST_CO
 from tqdm import tqdm
 from transformers import AutoTokenizer
 
+from chunk_datasets import pack_authors_to_disk, CONFIG 
+
 SPECIALS = ("<u>", "<h>")
 
 # ---- per-worker globals (loaded once via the pool initializer) ----
@@ -86,17 +88,22 @@ def count_batch(args):
 
     return counts
 
-
 if __name__ == "__main__":
     data_dir = Path(__file__).resolve().parent.parent
 
-    # (path, is_twitter, batch_size). Smaller batches for gutenberg
+    # Pack authors using the same filtering methods as chunk_datasets.py
+    print("Packing the datasets")
+    packed_paths = dict()
+    for source, settings in CONFIG.items():
+            try:
+                packed_paths[source] = pack_authors_to_disk(source, settings, data_dir)
+            except Exception as e:
+                print(f"Exception {e}")
+
+    # (path, is_twitter, batch_size)
     tasks_meta = [
-        (str(data_dir / "gutenberg_raw.parquet"),     False, 32),
-        (str(data_dir / "blogtext_raw.parquet"),     False, 512),
-        (str(data_dir / "reddit_raw.parquet"),        False, 512),
-        (str(data_dir / "twitter_train_raw.parquet"), True,  1024),
-        (str(data_dir / "twitter_test_raw.parquet"),  True,  1024),
+        (str(packed_paths[s]), s=='twitter', CONFIG[s].get('batch_size', 256))
+        for s in CONFIG
     ]
 
     total_rows = 0
@@ -137,3 +144,8 @@ if __name__ == "__main__":
     with open(output_path, "w") as f:
         json.dump(total, f)
     print(f"Wrote {len(total)} unique word types to {output_path}", flush=True)
+
+    print("Cleaning up temporary packed files...", flush=True)
+    for path in packed_paths.values():
+        if os.path.exists(path):
+            os.remove(path)
