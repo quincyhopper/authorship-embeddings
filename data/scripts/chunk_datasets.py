@@ -18,6 +18,7 @@ import pyarrow as pa
 import duckdb
 import numpy as np
 import os
+import time
 from collections import defaultdict
 from pathlib import Path
 from datasets import load_dataset, concatenate_datasets, Features, Value, Sequence, Dataset
@@ -184,7 +185,7 @@ def tokenise_and_chunk(batch: dict, tokenizer, source_name: str):
         input_ids = enc.ids
         if len(input_ids) != 512:
             continue
-        
+
         doc_idx = sample_map[chunk_idx]
  
         if source_name == 'gutenberg' and is_first_or_last_chunk(chunk_idx, doc_idx, doc_chunk_map):
@@ -222,6 +223,7 @@ CONFIG = {
 }
 
 if __name__ == "__main__":
+    print(f"chunk_datasets.py started at: {time.ctime()}")
     data_dir = Path(__file__).resolve().parent.parent
  
     tokenizer = AutoTokenizer.from_pretrained('roberta-large')
@@ -269,3 +271,5 @@ if __name__ == "__main__":
     for temp_file in temporary_files:
         if os.path.exists(temp_file):
             os.remove(temp_file)
+
+    print(f"chunk_datasets.py finished at: {time.ctime()}")
