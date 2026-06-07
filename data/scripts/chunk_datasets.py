@@ -100,10 +100,18 @@ def pack_authors_to_disk(source_name: str, settings: dict, data_dir: Path) -> Pa
                 GROUP BY author
             ) TO '{str(output_tmp_path)}' (FORMAT parquet, COMPRESSION snappy);
         """)
-    else:
-        sample_n = settings.get('sample_authors')
-        if sample_n:
-            author_filter = f"""WHERE author IS NOT NULL
+    elif source_name == 'gutenberg':
+        # We do not aggergate texts here because we need to be able to remove the first and last chunk
+        # of each book
+        sample_n = settings['sample_authors']
+        con.execute(f"""
+            COPY (
+                SELECT author,
+                       text,
+                       doc_id,
+                       'gutenberg' as source
+                FROM read_parquet([{input_files_str}])
+                WHERE author IS NOT NULL
                   AND author IN (
                       SELECT author FROM (
                           SELECT DISTINCT author
@@ -112,10 +120,10 @@ def pack_authors_to_disk(source_name: str, settings: dict, data_dir: Path) -> Pa
                       )
                       ORDER BY hash(author || '{SEED}')
                       LIMIT {sample_n}
-                  )"""
-        else:
-            author_filter = "WHERE author IS NOT NULL"
- 
+                  )
+            ) TO '{str(output_tmp_path)}' (FORMAT parquet, COMPRESSION snappy);
+        """)
+    else: # Blogtext: no special filtering or preprocessing
         con.execute(f"""
             COPY (
                 SELECT author,
@@ -123,7 +131,7 @@ def pack_authors_to_disk(source_name: str, settings: dict, data_dir: Path) -> Pa
                        'packed_' || min(doc_id) as doc_id,
                        '{source_name}' as source
                 FROM read_parquet([{input_files_str}])
-                {author_filter}
+                WHERE author IS NOT NULL
                 GROUP BY author
             ) TO '{str(output_tmp_path)}' (FORMAT parquet, COMPRESSION snappy);
         """)
@@ -131,10 +139,10 @@ def pack_authors_to_disk(source_name: str, settings: dict, data_dir: Path) -> Pa
     con.close()
     return output_tmp_path
 
-def is_first_or_last_chunk(idx: int, doc_chunk_map: dict) -> bool:
+def is_first_or_last_chunk(chunk_idx: int, doc_idx: int, doc_chunk_map: dict) -> bool:
     """True if chunk is the first or last in its document (or doc has < 2 chunks). Used for filtering gutenberg."""
-    chunk_indices = doc_chunk_map[idx]
-    return len(chunk_indices) < 2 or idx == chunk_indices[0] or idx == chunk_indices[-1]
+    chunk_indices = doc_chunk_map[doc_idx]
+    return len(chunk_indices) < 2 or chunk_idx == chunk_indices[0] or chunk_idx == chunk_indices[-1]
 
 def to_local_word_ids(word_ids):
     """Renumber HF word_ids to a chunk-local sequence (0,0,1,2,...). Special tokens (HF word_id None) -> -1."""
@@ -172,15 +180,16 @@ def tokenise_and_chunk(batch: dict, tokenizer, source_name: str):
         for chunk_idx, doc_idx in enumerate(sample_map):
             doc_chunk_map[doc_idx].append(chunk_idx)
  
-    for i, enc in enumerate(outputs.encodings):
+    for chunk_idx, enc in enumerate(outputs.encodings):
         input_ids = enc.ids
         if len(input_ids) != 512:
             continue
+        
+        doc_idx = sample_map[chunk_idx]
  
-        if source_name == 'gutenberg' and is_first_or_last_chunk(i, doc_chunk_map):
+        if source_name == 'gutenberg' and is_first_or_last_chunk(chunk_idx, doc_idx, doc_chunk_map):
             continue
  
-        doc_idx = sample_map[i]
         word_ids = to_local_word_ids(enc.word_ids)
  
         new_batch['author'].append(batch['author'][doc_idx])
