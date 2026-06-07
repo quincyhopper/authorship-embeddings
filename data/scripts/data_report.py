@@ -1,18 +1,15 @@
-import glob
-import os
 import pyarrow.parquet as pq
 import pyarrow.lib
+from pathlib import Path
 
 if __name__ == "__main__":
-
-    script_dir = os.path.dirname(os.path.abspath(__file__)) # Path to current script
-    data_dir = os.path.join(script_dir, "..")
-    raw_files = glob.glob(os.path.join(data_dir, "*raw.parquet"))
+    data_dir = Path(__file__).resolve().parent.parent
+    raw_files = list(data_dir.glob("*raw.parquet"))
     
     results = {}
 
     for filepath in raw_files:
-        filename = os.path.basename(filepath)
+        filename = str(filepath)
 
         try:
             pfile = pq.ParquetFile(filepath)
@@ -34,4 +31,4 @@ if __name__ == "__main__":
     total_rows = sum([info['rows'] for info in results.values()])
     total_authors = sum([info['authors'] for info in results.values()])
     print(f"\nTotal rows: {total_rows:,}")
-    print(f"\nTotal authors: {total_authors:,}")
+    print(f"Total authors: {total_authors:,}")
