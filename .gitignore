@@ -5,6 +5,7 @@ __pycache__/
 *.csv
 *.slurm
 *.txt
+*.json
 misc/
 data/*
 !data/scripts/
