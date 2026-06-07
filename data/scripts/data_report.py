@@ -34,7 +34,7 @@ def count_raw(data_dir: Path):
             print(f"  └── Unique Authors: {unique_authors:,}")
             print("-" * 60)
         else:
-            print(f"{'GRAND TOTALS':^60}")
+            print(f"{'TOTAL RAW':^60}")
             print("="*60)
             print(f"  ├── Total Documents: {row_count:,}")
             print(f"  └── Unique Authors: {unique_authors:,}")
@@ -47,31 +47,40 @@ def count_chunks(data_dir: Path):
     
     con = duckdb.connect()
 
-    # Query to count number of chunks and number of unique authors per source
+    # Added ROLLUP and GROUPING to seamlessly calculate grand totals
     query = f"""
         SELECT 
             source, 
             COUNT(*) AS chunk_count, 
-            COUNT(DISTINCT author) AS unique_authors 
+            COUNT(DISTINCT author) AS unique_authors,
+            GROUPING(source) AS is_total
         FROM read_parquet('{chunks_path}') 
-        GROUP BY source
-        ORDER BY chunk_count DESC;
+        GROUP BY ROLLUP(source)
+        ORDER BY is_total ASC, chunk_count DESC;
     """
 
-    # fethcall() returns list of tuples: [('twitter', 50000, 1200)]
     report_data = con.execute(query).fetchall()
     con.close()
 
-    print("\n" + "="*40)
-    print(f"{'CHUNKS REPORT':^40}")
-    print("="*40)
-    for source, chunk_count, unique_authors in report_data:
-        source_name = source if source is not None else "[Unknown Source]"
-        
-        print(f"Corpus: {source_name}")
-        print(f"  ├── Total Chunks: {chunk_count:,}")
-        print(f"  └── Unique Authors: {unique_authors:,}")
-        print("-" * 40)
+    print("\n" + "="*60)
+    print(f"{'CHUNKS REPORT':^60}")
+    print("="*60)
+    
+    for source, chunk_count, unique_authors, is_total in report_data:
+        # is_total == 0 means it's a regular corpus row
+        if is_total == 0:
+            source_name = source if source is not None else "[Unknown Source]"
+            print(f"Corpus: {source_name}")
+            print(f"  ├── Total Chunks: {chunk_count:,}")
+            print(f"  └── Unique Authors: {unique_authors:,}")
+            print("-" * 60)
+        # is_total == 1 means it's the ROLLUP grand total row
+        else:
+            print(f"{'TOTAL CHUNKS':^60}")
+            print("="*60)
+            print(f"  ├── Total Chunks: {chunk_count:,}")
+            print(f"  └── Unique Authors: {unique_authors:,}")
+            print("="*60)
 
 
 if __name__ == "__main__":
