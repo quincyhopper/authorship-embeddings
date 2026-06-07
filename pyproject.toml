@@ -21,6 +21,7 @@ dependencies = [
     "debugpy==1.8.20",
     "decorator==5.2.1",
     "dill==0.4.0",
+    "duckdb>=1.5.3",
     "executing==2.2.1",
     "filelock==3.20.3",
     "frozenlist==1.8.0",
