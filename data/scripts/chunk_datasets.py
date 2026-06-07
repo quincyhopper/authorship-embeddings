@@ -9,7 +9,7 @@ Word ids are relative to the chunk simply so the integers will be smaller, and t
 
 This stage does not depend on word_counts.json (the output of word_counts.py). Word ranks are derived later on using ranks.py. Furthermore, the original word strings are completely recoverable from input_ids, and word_ids supplies the word boundaries, so word ranks can be computed any number of times without having to run this expensive script.
 
-To add any new preprocessing (e.g. sampling, removing certain authors), modify the pack_authors_to_disk function.
+To add any new preprocessing (e.g. sampling, removing certain authors), modify the pack_authors function.
 """
 
 import gc
@@ -51,24 +51,24 @@ def clean_twitter(batch):
     batch['text'] = texts.to_pylist()
     return batch
 
-def pack_authors_to_disk(source_name: str, settings: dict, data_dir: Path) -> Path:
-    """Uses DuckDB to group, sample, and merge strings on disk to avoid OOM errors.
+def pack_authors(source_name: str, settings: dict, data_dir: Path) -> Path:
+    """Uses DuckDB to group, sample, and merge strings.
     
     Specifically:
-        Twitter corpora: ordered by author, 1,000 tweets sampled per-author.
+        Twitter corpora: ordered by author, 1,000 tweets sampled per-author, aggregate texts.
 
-        Reddit corpus: ordered by author, '[deleted]' and 'None' authors are removed.
+        Reddit corpus: ordered by author, '[deleted]' and 'None' authors are removed, aggregate texts.
 
         Gutenberg corpus: ordered by author, sample 1,270 authors.
 
-        Blog corpus: ordered by author.
+        Blog corpus: ordered by author, aggregate texts.
     """
     output_tmp_path = data_dir / f"{source_name}_packed_tmp.parquet"
  
     input_files_str = ", ".join([f"'{str(data_dir / f)}'" for f in settings['files']])
     sep = settings['sep']
  
-    print(f"    Executing on-disk author packing via DuckDB for {source_name}...")
+    print(f"    Executing author packing via DuckDB for {source_name}...")
  
     con = duckdb.connect()
  
@@ -235,7 +235,7 @@ if __name__ == "__main__":
     for source, settings in CONFIG.items():
         print(f"\n=== Processing Corpus Source: {source.upper()} ===")
  
-        packed_parquet_path = pack_authors_to_disk(source, settings, data_dir)
+        packed_parquet_path = pack_authors(source, settings, data_dir)
         temporary_files.append(packed_parquet_path)
  
         ds = load_dataset(path='parquet', data_files=[str(packed_parquet_path)],

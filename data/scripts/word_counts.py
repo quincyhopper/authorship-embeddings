@@ -27,7 +27,7 @@ from concurrent.futures import ProcessPoolExecutor, wait, as_completed, FIRST_CO
 from tqdm import tqdm
 from transformers import AutoTokenizer
 
-from chunk_datasets import pack_authors_to_disk, CONFIG 
+from chunk_datasets import pack_authors, CONFIG 
 
 SPECIALS = ("<u>", "<h>")
 
@@ -96,7 +96,7 @@ if __name__ == "__main__":
     packed_paths = dict()
     for source, settings in CONFIG.items():
             try:
-                packed_paths[source] = pack_authors_to_disk(source, settings, data_dir)
+                packed_paths[source] = pack_authors(source, settings, data_dir)
             except Exception as e:
                 print(f"Exception {e}")
 
