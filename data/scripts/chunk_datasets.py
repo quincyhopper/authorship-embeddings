@@ -85,7 +85,7 @@ def pack_authors(source_name: str, settings: dict, data_dir: Path) -> Path:
                        'packed_' || min(doc_id) as doc_id,
                        'twitter' as source
                 FROM ranked_tweets
-                WHERE rn <= 1000
+                WHERE rn <= 10000
                 GROUP BY author
             ) TO '{str(output_tmp_path)}' (FORMAT parquet, COMPRESSION snappy);
         """)
