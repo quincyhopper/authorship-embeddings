@@ -118,7 +118,7 @@ def pack_authors(source_name: str, settings: dict, data_dir: Path) -> Path:
         con.execute(f"""
             COPY (
                 SELECT author,
-                       string_agg(text, '{sep}') as text,
+                       string_agg(trim(text), '{sep}') as text,
                        'packed_' || min(doc_id) as doc_id,
                        '{source_name}' as source
                 FROM read_parquet([{input_files_str}])
@@ -207,10 +207,10 @@ def filter_valid_authors(ds: Dataset, n: int=16):
     return ds.select(indices)
 
 CONFIG = {
-    'blog':      {'pack': True, 'sep': " </s> </s> ", 'files': ["blogtext_raw.parquet"], 'batch_size': 256},
+    'blog':      {'pack': True, 'sep': " </s> <s> ", 'files': ["blogtext_raw.parquet"], 'batch_size': 256},
     'twitter':   {'pack': True, 'sep': "\n\n\n",      'files': ["twitter_train_raw.parquet", "twitter_test_raw.parquet"], 'batch_size': 256},
-    'reddit':    {'pack': True, 'sep': " </s> </s> ", 'files': ["reddit_raw.parquet"], 'batch_size': 256},
-    'gutenberg': {'pack': True, 'sep': " </s> </s> ", 'files': ["gutenberg_raw.parquet"], 'batch_size': 8, 'sample_authors': 1500},
+    'reddit':    {'pack': True, 'sep': " </s> <s> ", 'files': ["reddit_raw.parquet"], 'batch_size': 256},
+    'gutenberg': {'pack': True, 'sep': " </s> <s> ", 'files': ["gutenberg_raw.parquet"], 'batch_size': 8, 'sample_authors': 1500},
 }
 
 def chunk_datasets(tokenizer, unify: bool=True, remove_tmp: bool=True):
