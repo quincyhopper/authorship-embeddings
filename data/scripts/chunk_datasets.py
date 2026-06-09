@@ -19,6 +19,7 @@ import duckdb
 import numpy as np
 import os
 import time
+import argparse
 from collections import defaultdict
 from pathlib import Path
 from datasets import load_dataset, concatenate_datasets, Features, Value, Sequence, Dataset
@@ -31,7 +32,7 @@ RAW_FEATURES = Features({
     "source": Value("string")
     })
 
-HF_FEATURES = Features({
+CHUNKED_FEATURES = Features({
     "author": Value("string"),
     "doc_id": Value("string"),
     "source": Value("string"),
@@ -52,16 +53,14 @@ def clean_twitter(batch):
     return batch
 
 def pack_authors(source_name: str, settings: dict, data_dir: Path) -> Path:
-    """Uses DuckDB to group, sample, and merge strings.
+    """Uses DuckDB to group, sample, and merge texts.
     
     Specifically:
-        Twitter corpora: ordered by author, 1,000 tweets sampled per-author, aggregate texts.
+        Twitter: aggregate texts, sample up to 10,000 docs per author.
 
-        Reddit corpus: ordered by author, '[deleted]' and 'None' authors are removed, aggregate texts.
+        Gutenberg: do NOT aggregate texts, sample n authors and all of the texts.
 
-        Gutenberg corpus: ordered by author, sample 1,270 authors.
-
-        Blog corpus: ordered by author, aggregate texts.
+        Reddit and Blog: aggregate texts, remove [deleted] and 'nan' authors.
     """
     output_tmp_path = data_dir / f"{source_name}_packed_tmp.parquet"
  
@@ -79,6 +78,7 @@ def pack_authors(source_name: str, settings: dict, data_dir: Path) -> Path:
                     SELECT author, text, doc_id, source,
                            row_number() OVER (PARTITION BY author ORDER BY hash(doc_id || '{SEED}')) as rn
                     FROM read_parquet([{input_files_str}])
+                    WHERE author IS NOT NULL AND author NOT IN ('None', 'nan')
                 )
                 SELECT author,
                        string_agg(text, '{sep}') as text,
@@ -89,42 +89,32 @@ def pack_authors(source_name: str, settings: dict, data_dir: Path) -> Path:
                 GROUP BY author
             ) TO '{str(output_tmp_path)}' (FORMAT parquet, COMPRESSION snappy);
         """)
-    elif source_name == 'reddit':
-        con.execute(f"""
-            COPY (
-                SELECT author,
-                       string_agg(text, '{sep}') as text,
-                       'packed_' || min(doc_id) as doc_id,
-                       'reddit' as source
-                FROM read_parquet([{input_files_str}])
-                WHERE author NOT IN ('[deleted]', 'None') AND author IS NOT NULL
-                GROUP BY author
-            ) TO '{str(output_tmp_path)}' (FORMAT parquet, COMPRESSION snappy);
-        """)
     elif source_name == 'gutenberg':
         # We do not aggergate texts here because we need to be able to remove the first and last chunk
-        # of each book
+        # of each book. 
         sample_n = settings['sample_authors']
         con.execute(f"""
             COPY (
                 SELECT author,
-                       text,
-                       doc_id,
-                       'gutenberg' as source
+                    text,
+                    doc_id,
+                    'gutenberg' as source
                 FROM read_parquet([{input_files_str}])
                 WHERE author IS NOT NULL
-                  AND author IN (
-                      SELECT author FROM (
-                          SELECT DISTINCT author
-                          FROM read_parquet([{input_files_str}])
-                          WHERE author IS NOT NULL
-                      )
-                      ORDER BY hash(author || '{SEED}')
-                      LIMIT {sample_n}
-                  )
+                    AND CAST(author AS VARCHAR) NOT IN ('[deleted]', 'None', 'nan')
+                    AND author IN (
+                        SELECT author FROM (
+                                SELECT DISTINCT author
+                                FROM read_parquet([{input_files_str}])
+                                WHERE author IS NOT NULL
+                                    AND CAST(author AS VARCHAR) NOT IN ('[deleted]', 'None', 'nan')
+                        )
+                        ORDER BY hash(CAST(author AS VARCHAR) || '{SEED}')
+                        LIMIT {sample_n}
+                    )
             ) TO '{str(output_tmp_path)}' (FORMAT parquet, COMPRESSION snappy);
         """)
-    else: # Blogtext: no special filtering or preprocessing
+    else: # Blogtext and Reddit: just aggregate and remove unwanted authors
         con.execute(f"""
             COPY (
                 SELECT author,
@@ -132,7 +122,8 @@ def pack_authors(source_name: str, settings: dict, data_dir: Path) -> Path:
                        'packed_' || min(doc_id) as doc_id,
                        '{source_name}' as source
                 FROM read_parquet([{input_files_str}])
-                WHERE author IS NOT NULL
+                WHERE author IS NOT NULL 
+                    AND CAST(author AS VARCHAR) NOT IN ('[deleted]', 'None', 'nan')
                 GROUP BY author
             ) TO '{str(output_tmp_path)}' (FORMAT parquet, COMPRESSION snappy);
         """)
@@ -146,7 +137,7 @@ def is_first_or_last_chunk(chunk_idx: int, doc_idx: int, doc_chunk_map: dict) ->
     return len(chunk_indices) < 2 or chunk_idx == chunk_indices[0] or chunk_idx == chunk_indices[-1]
 
 def to_local_word_ids(word_ids):
-    """Renumber HF word_ids to a chunk-local sequence (0,0,1,2,...). Special tokens (HF word_id None) -> -1."""
+    """Renumber word_ids to a chunk-local sequence (0,0,1,2,...). Special tokens (HF word_id None) -> -1."""
     out = []
     cur = -1
     prev = object()  # sentinel distinct from any id and from None
@@ -161,7 +152,7 @@ def to_local_word_ids(word_ids):
             prev = wid
     return out
 
-def tokenise_and_chunk(batch: dict, tokenizer, source_name: str):
+def chunk_batch(batch: dict, tokenizer, source_name: str):
     """Tokenise to 512-token chunks and attach a per-token chunk-local word index."""
     outputs = tokenizer(
         batch['text'],
@@ -172,7 +163,7 @@ def tokenise_and_chunk(batch: dict, tokenizer, source_name: str):
     )
  
     sample_map = outputs.pop("overflow_to_sample_mapping")
-    new_batch = {k: [] for k in HF_FEATURES.keys()}
+    new_batch = {k: [] for k in CHUNKED_FEATURES.keys()}
  
     # Only needed for the Gutenberg first/last-chunk filter.
     doc_chunk_map = None
@@ -219,19 +210,24 @@ CONFIG = {
     'blog':      {'pack': True, 'sep': " </s> </s> ", 'files': ["blogtext_raw.parquet"], 'batch_size': 256},
     'twitter':   {'pack': True, 'sep': "\n\n\n",      'files': ["twitter_train_raw.parquet", "twitter_test_raw.parquet"], 'batch_size': 256},
     'reddit':    {'pack': True, 'sep': " </s> </s> ", 'files': ["reddit_raw.parquet"], 'batch_size': 256},
-    'gutenberg': {'pack': True, 'sep': " </s> </s> ", 'files': ["gutenberg_raw.parquet"], 'batch_size': 8, 'sample_authors': 1270},
+    'gutenberg': {'pack': True, 'sep': " </s> </s> ", 'files': ["gutenberg_raw.parquet"], 'batch_size': 8, 'sample_authors': 1500},
 }
 
-if __name__ == "__main__":
-    print(f"chunk_datasets.py started at: {time.ctime()}")
+def chunk_datasets(tokenizer, unify: bool=True, remove_tmp: bool=True):
+    """Main function for tokenising and chunking the 4 datasets.
+    
+    Args:
+        tokenizer: roberta-large tokenizer.
+        unify (bool): if True, the final chunks are saved into one dataset called 'chunks.parquet'. If False, datasets are saved to their own files, e.g. 'gutenberg_chunks.parquet'.
+        remove_tmp (bool): if True, the temporary files created by pack_authors() are deleted.
+    """
+    print(f"Unify={unify}")
+    print(f"Remove_tmp={remove_tmp}")
+
     data_dir = Path(__file__).resolve().parent.parent
- 
-    tokenizer = AutoTokenizer.from_pretrained('roberta-large')
-    tokenizer.add_special_tokens({'additional_special_tokens': ["<u>", "<h>"]})
- 
-    processed_chunks = []
+    processed_chunks = [] if unify else None
     temporary_files = []
- 
+
     for source, settings in CONFIG.items():
         print(f"\n=== Processing Corpus Source: {source.upper()} ===")
  
@@ -244,32 +240,55 @@ if __name__ == "__main__":
         if source == 'twitter':
             ds = ds.map(clean_twitter, batched=True, batch_size=5000,
                         desc="Applying Twitter text regular expressions")
- 
+            
         chunked_ds = ds.map(
-            tokenise_and_chunk,
+            chunk_batch,
             batched=True,
             batch_size=settings['batch_size'],
             num_proc=NUM_PROC,
             fn_kwargs={'tokenizer': tokenizer, 'source_name': source},
             remove_columns=ds.column_names,
-            features=HF_FEATURES,
+            features=CHUNKED_FEATURES,
             desc=f"Tokenising and chunking {source}",
         )
+
+        if unify:
+            processed_chunks.append(chunked_ds)
+            gc.collect()
+        else:
+            print(f"Filtering {source} chunks")
+            filtered = filter_valid_authors(chunked_ds, 16)
+
+            print(f"Saving {source} chunks to parquet")
+            filtered.to_parquet(str(data_dir / f'{source}_chunks.parquet'))
+
+    if unify:
+        print("\nConsolidating all processed datasets into a master dataset...")
+        master_dataset = concatenate_datasets(processed_chunks)
+
+        print("Filtering master dataset")
+        master_dataset = filter_valid_authors(master_dataset, 16)
+    
+        print("\nSaving finalized chunks to disk...")
+        master_dataset.to_parquet(str(data_dir / 'chunks.parquet'))
+
+    if remove_tmp:
+        print("Cleaning up intermediate data fragments...")
+        for temp_file in temporary_files:
+            if os.path.exists(temp_file):
+                os.remove(temp_file)
+
+if __name__ == "__main__":
+    print(f"chunk_datasets.py started at: {time.ctime()}")
+
+    p = argparse.ArgumentParser()
+    p.add_argument("--unify", action=argparse.BooleanOptionalAction, default=True)
+    p.add_argument("--rm-tmp", action=argparse.BooleanOptionalAction, default=True)
+    args = p.parse_args()
  
-        processed_chunks.append(chunked_ds)
-        gc.collect()
+    tokenizer = AutoTokenizer.from_pretrained('roberta-large')
+    tokenizer.add_special_tokens({'additional_special_tokens': ["<u>", "<h>"]})
  
-    print("\nConsolidating all processed sub-shards into a master corpus layer...")
-    master_dataset = concatenate_datasets(processed_chunks)
- 
-    master_dataset = filter_valid_authors(master_dataset, 16)
- 
-    print("\nSaving finalized chunks to disk...")
-    master_dataset.to_parquet(str(data_dir / 'chunks.parquet'))
- 
-    print("Cleaning up intermediate data fragments...")
-    for temp_file in temporary_files:
-        if os.path.exists(temp_file):
-            os.remove(temp_file)
+    chunk_datasets(tokenizer, unify=args.unify, remove_tmp=args.rm_tmp)
 
     print(f"chunk_datasets.py finished at: {time.ctime()}")
