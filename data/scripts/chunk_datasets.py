@@ -81,7 +81,7 @@ def pack_authors(source_name: str, settings: dict, data_dir: Path) -> Path:
                     WHERE author IS NOT NULL AND author NOT IN ('None', 'nan')
                 )
                 SELECT author,
-                       string_agg(text, '{sep}') as text,
+                       string_agg(trim(text), '{sep}') as text,
                        'packed_' || min(doc_id) as doc_id,
                        'twitter' as source
                 FROM ranked_tweets
@@ -96,7 +96,7 @@ def pack_authors(source_name: str, settings: dict, data_dir: Path) -> Path:
         con.execute(f"""
             COPY (
                 SELECT author,
-                    text,
+                    trim(text) as text,
                     doc_id,
                     'gutenberg' as source
                 FROM read_parquet([{input_files_str}])
