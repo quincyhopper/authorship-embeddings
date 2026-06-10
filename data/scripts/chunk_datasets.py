@@ -92,26 +92,15 @@ def pack_authors(source_name: str, settings: dict, data_dir: Path) -> Path:
     elif source_name == 'gutenberg':
         # We do not aggergate texts here because we need to be able to remove the first and last chunk
         # of each book. 
-        sample_n = settings['sample_authors']
         con.execute(f"""
             COPY (
                 SELECT author,
-                    trim(text) as text,
-                    doc_id,
-                    'gutenberg' as source
+                       trim(text) as text,
+                       doc_id,
+                       'gutenberg' as source
                 FROM read_parquet([{input_files_str}])
                 WHERE author IS NOT NULL
-                    AND CAST(author AS VARCHAR) NOT IN ('[deleted]', 'None', 'nan')
-                    AND author IN (
-                        SELECT author FROM (
-                                SELECT DISTINCT author
-                                FROM read_parquet([{input_files_str}])
-                                WHERE author IS NOT NULL
-                                    AND CAST(author AS VARCHAR) NOT IN ('[deleted]', 'None', 'nan')
-                        )
-                        ORDER BY hash(CAST(author AS VARCHAR) || '{SEED}')
-                        LIMIT {sample_n}
-                    )
+                  AND CAST(author AS VARCHAR) NOT IN ('[deleted]', 'None', 'nan')
             ) TO '{str(output_tmp_path)}' (FORMAT parquet, COMPRESSION snappy);
         """)
     else: # Blogtext and Reddit: just aggregate and remove unwanted authors
@@ -210,7 +199,7 @@ CONFIG = {
     'blog':      {'pack': True, 'sep': " </s> <s> ", 'files': ["blogtext_raw.parquet"], 'batch_size': 256},
     'twitter':   {'pack': True, 'sep': "\n\n\n",      'files': ["twitter_train_raw.parquet", "twitter_test_raw.parquet"], 'batch_size': 256},
     'reddit':    {'pack': True, 'sep': " </s> <s> ", 'files': ["reddit_raw.parquet"], 'batch_size': 256},
-    'gutenberg': {'pack': True, 'sep': " </s> <s> ", 'files': ["gutenberg_raw.parquet"], 'batch_size': 8, 'sample_authors': 1500},
+    'gutenberg': {'pack': True, 'sep': " </s> <s> ", 'files': ["gutenberg_raw.parquet"], 'batch_size': 4},
 }
 
 def chunk_datasets(tokenizer, unify: bool=True, remove_tmp: bool=True):
@@ -254,13 +243,14 @@ def chunk_datasets(tokenizer, unify: bool=True, remove_tmp: bool=True):
 
         if unify:
             processed_chunks.append(chunked_ds)
-            gc.collect()
+            del chunked_ds; gc.collect()
         else:
             print(f"Filtering {source} chunks")
             filtered = filter_valid_authors(chunked_ds, 16)
 
             print(f"Saving {source} chunks to parquet")
             filtered.to_parquet(str(data_dir / f'{source}_chunks.parquet'))
+            del filtered; gc.collect()
 
     if unify:
         print("\nConsolidating all processed datasets into a master dataset...")
