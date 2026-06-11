@@ -31,10 +31,10 @@ class AuthorshipDataset(Dataset):
             Dictionary where values are lists. Get passed to __call__ of AuthorshipCollator.
         """
         
-        # Sample chunks indices from this author
+        # Sample chunks indices from this author (without replacement) 
         author = self.author_list[index]
         chunk_idxs = self.author_chunk_idxs[author]
-        sampled_idxs = random.choices(chunk_idxs, k=self.view_size)
+        sampled_idxs = random.sample(chunk_idxs, k=self.view_size)
 
         # Fetch input_ids
         input_ids = [self.dataset[int(i)]['input_ids'] for i in sampled_idxs] # [V, Seq_len]
