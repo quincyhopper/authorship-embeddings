@@ -6,11 +6,12 @@ from datasets import load_dataset
 from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
 
 class AuthorshipDataset(Dataset):
-    def __init__(self, dataset: Dataset, view_size: int, author_list: list):
+    def __init__(self, dataset: Dataset, view_size: int, author_list: list, is_validation: bool=False):
 
         self.dataset = dataset
         self.view_size = view_size
         self.author_list = author_list
+        self.is_validation = is_validation
 
         # Only select author IDs to save memory
         # Keys: author, Values: [chunk indices]
@@ -22,7 +23,7 @@ class AuthorshipDataset(Dataset):
         return len(self.author_list)
     
     def __getitem__(self, index: int):
-        """Called repeatedly by DataLoader to make a batch. 
+        """Called repeatedly by DataLoader to make a batch. If validation dataset, we also need to pass the split
         
         Args:
             index: index of an author in self.author_ids
@@ -31,10 +32,14 @@ class AuthorshipDataset(Dataset):
             Dictionary where values are lists. Get passed to __call__ of AuthorshipCollator.
         """
         
-        # Sample chunks indices from this author (without replacement) 
+        # Sample chunks indices from this author
         author = self.author_list[index]
         chunk_idxs = self.author_chunk_idxs[author]
-        sampled_idxs = random.sample(chunk_idxs, k=self.view_size)
+
+        if self.is_validation:
+            sampled_idxs = chunk_idxs[:self.view_size] # Deterministically get chunks
+        else:
+            sampled_idxs = random.sample(chunk_idxs, k=self.view_size)
 
         # Fetch input_ids
         input_ids = [self.dataset[int(i)]['input_ids'] for i in sampled_idxs] # [V, Seq_len]
@@ -71,7 +76,7 @@ class AuthorshipDataModule(L.LightningDataModule):
 
         # Init Dataset objects
         self.train_ds = AuthorshipDataset(self.train_raw, self.view_size, train_authors)
-        self.val_ds = AuthorshipDataset(self.val_raw, self.view_size, val_authors)
+        self.val_ds = AuthorshipDataset(self.val_raw, self.view_size, val_authors, is_validation=True)
 
         # Calculate weights for training sampler
         self.weights = self._calculate_weights(self.train_raw, train_authors)
