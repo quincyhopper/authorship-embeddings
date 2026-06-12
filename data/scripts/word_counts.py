@@ -67,7 +67,7 @@ if __name__ == "__main__":
     data_dir = Path(__file__).resolve().parent.parent
     train_path = data_dir / 'train.parquet'
 
-    batch_size = 64
+    batch_size = 2048
     n_rows = pq.read_metadata(train_path).num_rows
     total_batches = (n_rows + batch_size - 1) // batch_size
     print(f"Training set has {n_rows} rows", flush=True)
