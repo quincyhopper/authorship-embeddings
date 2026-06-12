@@ -5,8 +5,6 @@ Counts all of the words in the training dataset. Words are decoded from the inpu
 import os
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")  # we parallelise at the process level
 import json
-import pyarrow as pa
-import pyarrow.compute as pc
 import pyarrow.parquet as pq
 from collections import Counter
 from pathlib import Path
