@@ -6,7 +6,7 @@ from datasets import load_dataset
 from torch.utils.data import Dataset, DataLoader, Sampler
 
 def make_attn_mask(word_ranks, masking_threshold):
-    mask = (word_ranks > masking_threshold) & (word_ranks >= 0)
+    mask = (word_ranks > masking_threshold)
     return mask.long()
 
 class AuthorshipDataset(Dataset):
