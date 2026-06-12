@@ -1,5 +1,5 @@
 """
-This script is used for making train and validation splits from the various *_chunks.parquet files. By default, we sample 256 authors per corpus for validation and 10,000 authors from gutenberg for training.
+This script is used for making train and validation splits from the chunked files (either *_chunks.parquet or chunks.parquet). By default, we sample 256 authors per corpus for validation and 10,000 authors from gutenberg for training.
 """
 
 import duckdb
@@ -61,8 +61,7 @@ def split_datasets(data_dir: Path, authors_per_corpus: int=256, gutenberg_train_
                  AND c.author = v.author
             )
             SELECT 
-                * EXCLUDE(global_rn, chunk_rn),
-                CASE WHEN chunk_rn <= 8 THEN 'support' ELSE 'query' END as split_type
+                * EXCLUDE(global_rn, chunk_rn)
             FROM val_chunks_ranked
             WHERE chunk_rn <= 16
         ) TO '{str(val_output_path)}' (FORMAT parquet, COMPRESSION snappy);
@@ -114,16 +113,15 @@ def split_datasets(data_dir: Path, authors_per_corpus: int=256, gutenberg_train_
         ) TO '{str(train_output_path)}' (FORMAT parquet, COMPRESSION snappy);
     """)
     
-    # 4. Generate the Verification Report
     print("\n" + "="*55)
-    print(f"{'PARTITION SPLIT REPORT':^55}")
+    print(f"{"PARTITION SPLIT REPORT":^55}")
     print("="*55)
     
     val_counts = con.execute(f"""
-        SELECT source, split_type, COUNT(*), COUNT(DISTINCT author)
+        SELECT source, COUNT(*), COUNT(DISTINCT author)
         FROM read_parquet('{str(val_output_path)}')
-        GROUP BY source, split_type
-        ORDER BY source, split_type DESC;
+        GROUP BY source
+        ORDER BY source;
     """).fetchall()
     
     train_counts = con.execute(f"""
@@ -136,13 +134,13 @@ def split_datasets(data_dir: Path, authors_per_corpus: int=256, gutenberg_train_
     con.close()
 
     print("\nValidation Partition (val.parquet):")
-    print(f"{'Corpus':<12} | {'Set Type':<10} | {'Chunks':<8} | {'Authors':<8}")
+    print(f"{"Corpus":<12} | {"Total Chunks":<12} | {"Unique Authors":<14}")
     print("-" * 48)
-    for src, s_type, chunks, auths in val_counts:
-        print(f"{src:<12} | {s_type:<10} | {chunks:<8,} | {auths:<8,}")
+    for src, chunks, auths in val_counts:
+        print(f"{src:<12} | {chunks:<12,} | {auths:<14,}")
         
     print("\nTraining Partition (train.parquet):")
-    print(f"{'Corpus':<12} | {'Total Chunks':<12} | {'Unique Authors':<14}")
+    print(f"{"Corpus":<12} | {"Total Chunks":<12} | {"Unique Authors":<14}")
     print("-" * 48)
     for src, chunks, auths in train_counts:
         print(f"{src:<12} | {chunks:<12,} | {auths:<14,}")
