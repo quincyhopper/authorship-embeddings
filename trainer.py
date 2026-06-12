@@ -6,7 +6,7 @@ from loss import SupConLoss
 from transformers import get_linear_schedule_with_warmup
 from sklearn.metrics import classification_report
 
-def predict_knn(support_vecs, query_vecs, support_labels, query_labels, k: int=1):
+def predict_knn(support_vecs, query_vecs, support_labels, k: int=1):
     support_norm = F.normalize(support_vecs)
     query_norm = F.normalize(query_vecs)
     sim_matrix = torch.matmul(query_norm, support_norm.T) # i,j is the similarity between query_i and support_j
@@ -151,7 +151,7 @@ class ContrastiveTrainer(L.LightningModule):
             query_labels = labels.repeat_interleave(8)
 
             # --- KNN Evaluation ---
-            y_pred = predict_knn(support_vecs, query_vecs, support_labels, query_labels).detach().cpu().numpy()
+            y_pred = predict_knn(support_vecs, query_vecs, support_labels, k=1).detach().cpu().numpy()
             y_true = query_labels.detach().cpu().numpy()
 
             report = classification_report(y_true, y_pred, output_dict=True, zero_division=0)
