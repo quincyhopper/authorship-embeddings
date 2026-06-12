@@ -1,16 +1,21 @@
 import torch
 import random
 import lightning as L
-from collections import Counter, defaultdict
+from collections import defaultdict
 from datasets import load_dataset
-from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
+from torch.utils.data import Dataset, DataLoader, Sampler
+
+def make_attn_mask(word_ranks, masking_threshold):
+    mask = (word_ranks > masking_threshold) & (word_ranks >= 0)
+    return mask.long()
 
 class AuthorshipDataset(Dataset):
-    def __init__(self, dataset: Dataset, view_size: int, author_list: list, is_validation: bool=False):
+    def __init__(self, dataset, view_size: int, author_list: list, masking_threshold: int, is_validation: bool=False):
 
-        self.dataset = dataset
+        self.dataset = dataset.with_format('torch', columns=['input_ids', 'word_ids', 'word_ranks'], output_all_columns=True)
         self.view_size = view_size
         self.author_list = author_list
+        self.masking_threshold = masking_threshold
         self.is_validation = is_validation
 
         # Only select author IDs to save memory
@@ -42,20 +47,67 @@ class AuthorshipDataset(Dataset):
             sampled_idxs = random.sample(chunk_idxs, k=self.view_size)
 
         # Fetch input_ids
-        input_ids = [self.dataset[int(i)]['input_ids'] for i in sampled_idxs] # [V, Seq_len]
-        attention_mask = [self.dataset[int(i)]['attention_mask'] for i in sampled_idxs]
+        input_ids = self.dataset[sampled_idxs]['input_ids'] # [V, Seq_len]
+        word_ranks = self.dataset[sampled_idxs]['word_ranks']   # [V, Seq_len]
+        attn_masks = make_attn_mask(word_ranks, self.masking_threshold)
 
-        return {"label": index, "input_ids": input_ids, 'attention_mask': attention_mask}
+        return {"label": index, "input_ids": input_ids, 'attention_mask': attn_masks}
     
 class AuthorshipCollator:
     def __call__(self, batch: list[dict]):
-        labels = torch.tensor([item['label'] for item in batch], dtype=torch.long)
-        input_ids = torch.stack([torch.as_tensor(item['input_ids']) for item in batch])
-        attention_mask = torch.stack([torch.as_tensor(item['attention_mask']) for item in batch])
+        labels = [item['label'] for item in batch]
+        input_ids = torch.stack([item['input_ids'] for item in batch])
+        attention_mask = torch.stack([item['attention_mask'] for item in batch])
         return input_ids, attention_mask, labels
     
+class BalancedSampler(Sampler):
+    def __init__(self, author_list: list, author_source_map: dict, batch_size: int):
+
+        self.batch_size = batch_size
+        self.num_corpora = 4
+        if batch_size % self.num_corpora != 0:
+            raise ValueError(f"Batch size {self.batch_size} must be divisible by num corpora ({self.num_corpora})")
+        
+        self.samples_per_corpus = batch_size // self.num_corpora
+
+        self.source_to_idxs = defaultdict(list)
+        for idx, author in enumerate(author_list):
+            source = author_source_map[author]
+            self.source_to_idxs[source].append(idx)
+
+        self.sources = list(self.source_to_idxs.keys())
+
+    def __iter__(self):
+        # Shuffle the indices of each source
+        shuffled_indices = {
+            src: random.sample(idxs, len(idxs))
+            for src, idxs in self.source_to_idxs.items()
+        }
+
+        # Get length of largest corpus
+        max_len = max([len(x) for x in shuffled_indices.values()])
+        num_batches = (max_len + self.samples_per_corpus -1) // self.samples_per_corpus
+
+        # Assemble batches
+        for _ in range(num_batches):
+            batch = []
+            for source, pool in shuffled_indices.items():
+                if len(pool) < self.samples_per_corpus: # Up sample if source runs out
+                    shuffled_indices[source] = random.sample(self.source_to_idxs[source], len(self.source_to_idxs[source]))
+                    pool = shuffled_indices[source]
+                
+                for _ in range(self.samples_per_corpus):
+                    batch.append(pool.pop())
+
+            random.shuffle(batch)
+            yield(batch)
+
+    def __len__(self):
+        max_len = max([len(x) for x in self.source_to_idxs.values()])
+        return (max_len + self.samples_per_corpus -1) // self.samples_per_corpus
+
 class AuthorshipDataModule(L.LightningDataModule):
-    def __init__(self, train_path, val_path, batch_size=1024, view_size=16, max_seq_len=512, num_workers=1):
+    def __init__(self, train_path, val_path, batch_size=1024, view_size=16, max_seq_len=512, num_workers=1, masking_threshold: int=0):
         super().__init__()
         self.train_path = train_path
         self.val_path = val_path
@@ -63,6 +115,7 @@ class AuthorshipDataModule(L.LightningDataModule):
         self.view_size = view_size
         self.max_seq_len = max_seq_len
         self.num_workers = num_workers
+        self.masking_threshold = masking_threshold
 
     def setup(self, stage=None):
 
@@ -71,52 +124,27 @@ class AuthorshipDataModule(L.LightningDataModule):
         self.val_raw = load_dataset(path='parquet', data_files=self.val_path, split='train')
 
         # Extract author lists 
-        train_authors = self.train_raw.unique('author')
+        self.train_authors = self.train_raw.unique('author')
         val_authors = self.val_raw.unique('author')
 
         # Init Dataset objects
-        self.train_ds = AuthorshipDataset(self.train_raw, self.view_size, train_authors)
-        self.val_ds = AuthorshipDataset(self.val_raw, self.view_size, val_authors, is_validation=True)
+        self.train_ds = AuthorshipDataset(self.train_raw, self.view_size, self.train_authors, self.masking_threshold)
+        self.val_ds = AuthorshipDataset(self.val_raw, self.view_size, val_authors, self.masking_threshold, is_validation=True)
 
-        # Calculate weights for training sampler
-        self.weights = self._calculate_weights(self.train_raw, train_authors)
-
-    def _calculate_weights(self, dataset, author_list):
-        """Calculate the weight to upsample the smaller datasets. Replicating the 1/14 minimum."""
-
-        # Map each author to their source dataset {author: source}
-        author_source_map = {}
-        for row in dataset.select_columns(['author', 'source']):
-            if row['author'] not in author_source_map:
-                author_source_map[row['author']] = row['source']
-        
-        # Among the unique authors, count the number of times each source appears
-        author_sources = [author_source_map[auth] for auth in author_list]
-        source_counts = Counter(author_sources)
-        total_authors = len(author_sources)
-
-        # Each source gets AT LEAST 1/14 
-        target_min_prob = 1/14
-        source_weight_map = {}
-
-        for s, count in source_counts.items():
-            default_prob = count / total_authors
-            prob = max(default_prob, target_min_prob) # Weight is AT LEAST 1/14
-            source_weight_map[s] = prob / count
-
-        # Generate one weight per author based on their source
-        weights = [source_weight_map[author_source_map[auth]] for auth in author_list]
-        return torch.DoubleTensor(weights)
+        # Build author source map 
+        self.author_source_map = {}
+        for row in self.train_raw.select_columns(['author', 'source']):
+            if row['author'] not in self.author_source_map:
+                self.author_source_map[row['author']] = row['source']
 
     def train_dataloader(self):
-        sampler = WeightedRandomSampler(self.weights, num_samples=len(self.weights), replacement=True)
+        sampler = BalancedSampler(self.train_authors, self.author_source_map, self.batch_size)
         return DataLoader(
             self.train_ds, 
-            batch_size=self.batch_size, 
-            sampler=sampler,
+            batch_sampler=sampler,
             collate_fn=AuthorshipCollator(), 
             num_workers=self.num_workers, 
-            drop_last=True
+            #drop_last=True
             )
     
     def val_dataloader(self):
