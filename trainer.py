@@ -4,15 +4,20 @@ import lightning as L
 from model import ModelWrapper
 from loss import SupConLoss
 from transformers import get_linear_schedule_with_warmup
+from sklearn.metrics import classification_report
 
 def predict_knn(support_vecs, query_vecs, support_labels, query_labels, k: int=1):
     support_norm = F.normalize(support_vecs)
     query_norm = F.normalize(query_vecs)
     sim_matrix = torch.matmul(query_norm, support_norm.T) # i,j is the similarity between query_i and support_j
-    topk_scores, topk_indices = torch.topk(sim_matrix, k=k)
-    preds = support_labels[topk_indices.squeeze(1)]
+    _, topk_indices = torch.topk(sim_matrix, k=k)
+    topk_labels = support_labels[topk_indices]
 
-    return preds
+    if k == 1:
+        return topk_labels.squeeze(-1)
+    else:
+        preds, _ = torch.mode(topk_labels) # Compute majority vote along dim=-1
+        return preds
 
 class ContrastiveTrainer(L.LightningModule):
     def __init__(self, model_code, lr=1e-5, minibatch_size=8, weight_decay=0.01, warmup_steps=180):
@@ -146,11 +151,19 @@ class ContrastiveTrainer(L.LightningModule):
             query_labels = labels.repeat_interleave(8)
 
             # --- KNN Evaluation ---
-            preds = predict_knn(support_vecs, query_vecs, support_labels, query_labels)
-            correct = (preds == query_labels).sum().item()
-            val_acc = correct / len(query_labels)
+            y_pred = predict_knn(support_vecs, query_vecs, support_labels, query_labels).detach().cpu().numpy()
+            y_true = query_labels.detach().cpu().numpy()
 
-            self.log('val_acc', val_acc, rank_zero_only=True)
+            report = classification_report(y_true, y_pred, output_dict=True, zero_division=0)
+            macro_precision = report["macro avg"]["precision"]
+            macro_recall = report["macro avg"]["recall"]
+            macro_f1 = report["macro avg"]["f1-score"]
+            accuracy = report["accuracy"]
+            
+            self.log("val_macro_precision", macro_precision, rank_zero_only=True)
+            self.log("val_macro_recall", macro_recall, rank_zero_only=True)
+            self.log("val_macro_f1", macro_f1, rank_zero_only=True)
+            self.log("vaL_acc", accuracy, rank_zero_only=True)
 
         self.val_embeddings.clear()
         self.val_labels.clear()
