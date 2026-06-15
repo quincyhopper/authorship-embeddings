@@ -16,13 +16,8 @@ WEIGHT_DECAY = 1e-4
 WARMUP_STEPS = 180
 NUM_WORKERS = 8
 
-TRAIN_PATH = [
-    'data/reddit_train.parquet',
-    'data/twitter_train.parquet',
-    'data/gutenberg_train.parquet',
-    'data/blogtext_train.parquet'
-]
-VAL_PATH = 'data/reddit_val.parquet'
+TRAIN_PATH = ['data/train.parquet']
+VAL_PATH = ['data/val.parquet']
 
 if __name__ == "__main__":
     torch.set_float32_matmul_precision('medium')
@@ -52,13 +47,16 @@ if __name__ == "__main__":
     csv_logger = CSVLogger(save_dir='log/', name=RUN_NAME)
     
     # Init data loaders
-    data_module = AuthorshipDataModule(train_path=TRAIN_PATH,
-                                       val_path=VAL_PATH, 
-                                       batch_size=GLOBAL_BATCH_SIZE, 
-                                       view_size=VIEW_SIZE,
-                                       max_seq_len=MAX_SEQ_LEN,
-                                       num_workers=NUM_WORKERS
-                                       )
+    data_module = AuthorshipDataModule(
+        train_path=TRAIN_PATH,
+        val_path=VAL_PATH, 
+        batch_size=GLOBAL_BATCH_SIZE, 
+        view_size=VIEW_SIZE,
+        max_seq_len=MAX_SEQ_LEN,
+        num_workers=NUM_WORKERS,
+        content_masking=False,
+        masking_threshold=None,
+    )
 
     # Init Lightning Trainer
     trainer = L.Trainer(
@@ -74,12 +72,16 @@ if __name__ == "__main__":
     )
 
     # Init trainer
-    model = ContrastiveTrainer(MODEL_CODE, 
-                               lr=LR, 
-                               minibatch_size=MINIBATCH_SIZE,
-                               weight_decay=WEIGHT_DECAY,
-                               warmup_steps=WARMUP_STEPS
-                               )
+    model = ContrastiveTrainer(
+        MODEL_CODE, 
+        lr=LR, 
+        minibatch_size=MINIBATCH_SIZE,
+        weight_decay=WEIGHT_DECAY,
+        warmup_steps=WARMUP_STEPS,
+        knn_k=1,
+        knn_n_support=1,
+        knn_n_authors=1024,
+    )
 
     # 3. Train
     trainer.fit(model, data_module)

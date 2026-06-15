@@ -20,7 +20,17 @@ def predict_knn(support_vecs, query_vecs, support_labels, k: int=1):
         return preds
 
 class ContrastiveTrainer(L.LightningModule):
-    def __init__(self, model_code, lr=1e-5, minibatch_size=8, weight_decay=0.01, warmup_steps=180):
+    def __init__(
+            self, 
+            model_code, 
+            lr=1e-5, 
+            minibatch_size=8, 
+            weight_decay=0.01, 
+            warmup_steps=180,
+            knn_k=1,
+            knn_n_support=1,
+            knn_n_authors=1024,
+            ):
         super().__init__()
 
         self.model = ModelWrapper(model_code)
@@ -29,6 +39,9 @@ class ContrastiveTrainer(L.LightningModule):
         self.weight_decay = weight_decay
         self.warmup_steps = warmup_steps
         self.loss_func = SupConLoss(temperature=.07)
+        self.knn_k = knn_k
+        self.knn_n_support = knn_n_support
+        self.knn_n_authors = knn_n_authors
         self.save_hyperparameters()
 
         self.automatic_optimization = False
@@ -137,33 +150,31 @@ class ContrastiveTrainer(L.LightningModule):
         gathered_embeddings = self.all_gather(torch.cat(self.val_embeddings, dim=0)) # (n_GPU, B, V, D)
         gathered_labels = self.all_gather(torch.cat(self.val_labels, dim=0))
 
-        embeddings = gathered_embeddings.view(-1, gathered_embeddings.shape[-2], gathered_embeddings.shape[-1])
+        embeddings = gathered_embeddings.view(-1, gathered_embeddings.shape[-2], gathered_embeddings.shape[-1]) # (n_authors, views, d_model)
         labels = gathered_labels.view(-1)
 
-        batch_size, view_size, d_model = embeddings.shape
+        n_support = self.hparams.knn_n_support
+        n_views = embeddings.shape[1]
+        d_model = embeddings.shape[2]
+        n_query = n_views - n_support # 15 query texts per author
 
         # only master GPU does the KNN
         if self.trainer.is_global_zero:
-            support_vecs = embeddings[:, :8, :].view(-1, d_model) # Take first 8 texts from each author and flatten
-            query_vecs = embeddings[:, 8:, :].view(-1, d_model)  # Take last 8 texts and flatten
-
-            support_labels = labels.repeat_interleave(8)
-            query_labels = labels.repeat_interleave(8)
+            support_vecs = embeddings[:, :n_support, :].reshape(-1, d_model) # (1024 * n_support, d_model)
+            query_vecs = embeddings[:, n_support:, :].reshape(-1, d_model)   # (1024 * n_query, d_model)
+ 
+            support_labels = labels.repeat_interleave(n_support)
+            query_labels = labels.repeat_interleave(n_query)
 
             # --- KNN Evaluation ---
-            y_pred = predict_knn(support_vecs, query_vecs, support_labels, k=1).detach().cpu().numpy()
+            y_pred = predict_knn(support_vecs, query_vecs, support_labels, k=self.hparams.knn_k).detach().cpu().numpy()
             y_true = query_labels.detach().cpu().numpy()
 
             report = classification_report(y_true, y_pred, output_dict=True, zero_division=0)
-            macro_precision = report["macro avg"]["precision"]
-            macro_recall = report["macro avg"]["recall"]
-            macro_f1 = report["macro avg"]["f1-score"]
-            accuracy = report["accuracy"]
-            
-            self.log("val_macro_precision", macro_precision, rank_zero_only=True)
-            self.log("val_macro_recall", macro_recall, rank_zero_only=True)
-            self.log("val_macro_f1", macro_f1, rank_zero_only=True)
-            self.log("vaL_acc", accuracy, rank_zero_only=True)
+            self.log("val_macro_precision", report["macro avg"]["precision"], rank_zero_only=True)
+            self.log("val_macro_recall",    report["macro avg"]["recall"],    rank_zero_only=True)
+            self.log("val_macro_f1",        report["macro avg"]["f1-score"],  rank_zero_only=True)
+            self.log("val_acc",             report["accuracy"],               rank_zero_only=True)
 
         self.val_embeddings.clear()
         self.val_labels.clear()
