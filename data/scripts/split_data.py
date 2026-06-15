@@ -5,7 +5,7 @@ This script is used for making train and validation splits from the chunked file
 import duckdb
 from pathlib import Path
 
-def split_datasets(data_dir: Path, authors_per_corpus: int=256, gutenberg_train_authors: int=10_000, seed: int=42):
+def split_datasets(data_dir: Path, authors_per_val: int=256, gutenberg_train_authors: int=1270, seed: int=42):
     """Make train and validation splits by sampling a number of authors from each corpus."""
     
     # Get individual chunk files or default to master chunk file
@@ -13,7 +13,7 @@ def split_datasets(data_dir: Path, authors_per_corpus: int=256, gutenberg_train_
     if not chunk_files:
         master_file = data_dir / 'chunks.parquet'
         if master_file.exists():
-            chunk_files[master_file]
+            chunk_files.append(master_file)
         else:
             raise FileNotFoundError(f"Could not find chunked files in {data_dir}")
         
@@ -23,94 +23,67 @@ def split_datasets(data_dir: Path, authors_per_corpus: int=256, gutenberg_train_
 
     con = duckdb.connect()
 
+    # Build validation set once and then reuse it to filter out the traing set
+    con.execute(f"""
+        CREATE TEMP TABLE val_authors AS
+        WITH unique_authors AS (
+            SELECT DISTINCT source, author
+            FROM read_parquet([{input_paths_str}])
+        ),
+        ranked AS (
+            SELECT source, author,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY source
+                       ORDER BY HASH(CAST(author AS VARCHAR) || '{seed}')
+                   ) AS rn
+            FROM unique_authors
+        )
+        SELECT source, author FROM ranked WHERE rn <= {authors_per_val};
+    """)
+
     # VALIDATION SET
+    print(f"Compiling validation dataset with {authors_per_val} authors per corpus...")
     con.execute(f"""
         COPY (
-            WITH unique_authors AS (
-                SELECT DISTINCT source, author
+            WITH chunks_indexed AS (
+                SELECT *, ROW_NUMBER() OVER () AS global_rn
                 FROM read_parquet([{input_paths_str}])
             ),
-            ranked_authors AS (
-                SELECT source, 
-                       author,
+            ranked AS (
+                SELECT c.* EXCLUDE(global_rn),
                        ROW_NUMBER() OVER (
-                           PARTITION BY source 
-                           ORDER BY HASH(CAST(author AS VARCHAR) || '{seed}')
-                       ) as author_rn
-                FROM unique_authors
-            ),
-            val_authors AS (
-                SELECT source, author
-                FROM ranked_authors
-                WHERE author_rn <= {authors_per_corpus}
-            ),
-            chunks_indexed AS (
-                -- Generates a stable global index to allow reproducible chunk shuffling
-                SELECT *, ROW_NUMBER() OVER() as global_rn
-                FROM read_parquet([{input_paths_str}])
-            ),
-            val_chunks_ranked AS (
-                SELECT c.*,
-                       ROW_NUMBER() OVER (
-                           PARTITION BY c.source, c.author 
-                           ORDER BY HASH(c.global_rn || '{seed}')
-                       ) as chunk_rn
+                           PARTITION BY c.source, c.author
+                           ORDER BY HASH(CAST(c.global_rn AS VARCHAR) || '{seed}')
+                       ) AS chunk_rn
                 FROM chunks_indexed c
-                JOIN val_authors v 
-                  ON c.source = v.source 
-                 AND c.author = v.author
+                JOIN val_authors v ON c.source = v.source AND c.author = v.author
             )
-            SELECT 
-                * EXCLUDE(global_rn, chunk_rn)
-            FROM val_chunks_ranked
-            WHERE chunk_rn <= 16
-        ) TO '{str(val_output_path)}' (FORMAT parquet, COMPRESSION snappy);
+            SELECT * EXCLUDE(chunk_rn) FROM ranked WHERE chunk_rn <= 16
+        ) TO '{val_output_path}' (FORMAT parquet, COMPRESSION snappy);
     """)
     
     # TRAINING SET
-    print("Compiling training partition (routing remaining authors)...")
+    print("Compiling training partition from remaining authors...")
     con.execute(f"""
         COPY (
-            WITH unique_authors AS (
-                SELECT DISTINCT source, author
-                FROM read_parquet([{input_paths_str}])
-            ),
-            ranked_authors AS (
-                SELECT source, 
-                       author,
+            WITH train_candidates AS (
+                SELECT u.source, u.author,
                        ROW_NUMBER() OVER (
-                           PARTITION BY source 
-                           ORDER BY HASH(CAST(author AS VARCHAR) || '{seed}')
-                       ) as author_rn
-                FROM unique_authors
-            ),
-            val_authors AS (
-                SELECT source, author
-                FROM ranked_authors
-                WHERE author_rn <= {authors_per_corpus}
-            ),
-            train_candidates AS (
-                SELECT r.source, r.author, 
-                       ROW_NUMBER() OVER (
-                           PARTITION BY r.source 
-                           ORDER BY r.author_rn
-                       ) as train_rn
-                FROM ranked_authors r
-                LEFT JOIN val_authors v 
-                  ON r.source = v.source AND r.author = v.author
+                           PARTITION BY u.source
+                           ORDER BY HASH(CAST(u.author AS VARCHAR) || '{seed}')
+                       ) AS rn
+                FROM (SELECT DISTINCT source, author FROM read_parquet([{input_paths_str}])) u
+                LEFT JOIN val_authors v ON u.source = v.source AND u.author = v.author
                 WHERE v.author IS NULL
             ),
             train_authors AS (
-                SELECT source, author
-                FROM train_candidates
-                WHERE source != 'gutenberg' OR train_rn <= {gutenberg_train_authors}
+                SELECT source, author FROM train_candidates
+                WHERE source != 'gutenberg' OR rn <= {gutenberg_train_authors}
             )
             SELECT c.*
             FROM read_parquet([{input_paths_str}]) c
-            JOIN train_authors t 
-              ON c.source = t.source 
-             AND c.author = t.author
-        ) TO '{str(train_output_path)}' (FORMAT parquet, COMPRESSION snappy);
+            JOIN train_authors t ON c.source = t.source AND c.author = t.author
+        ) TO '{train_output_path}' (FORMAT parquet, COMPRESSION snappy);
     """)
     
     print("\n" + "="*55)
@@ -151,7 +124,7 @@ if __name__ == "__main__":
     data_dir = Path(__file__).resolve().parent.parent
     split_datasets(
         data_dir, 
-        authors_per_corpus=256,
-        gutenberg_train_authors=10_000,
+        authors_per_val=256,
+        gutenberg_train_authors=1270,
         seed=42
         )
