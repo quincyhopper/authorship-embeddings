@@ -12,7 +12,8 @@ class ModelWrapper(nn.Module):
         super().__init__()
 
         self.transformer = AutoModel.from_pretrained(model_code)
-        self.d_model = self.transformer.config.hidden_size       # 1024 for RoBERTa-Large
+        self.transformer.resize_token_embeddings(50267)    # New vocab size after adding <u> and <h>
+        self.d_model = self.transformer.config.hidden_size # 1024 for RoBERTa-Large
         self.projection = nn.Linear(self.d_model, self.d_model)
 
     def forward(self, input_ids, attention_mask):
