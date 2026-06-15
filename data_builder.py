@@ -81,7 +81,7 @@ class AuthorshipCollator:
 
         labels = torch.tensor([item['label'] for item in batch])
         input_ids = torch.stack([item['input_ids'] for item in batch]) # Shape (batch_size, view_size, 512)
-        attention_mask = torch.ones_like(input_ids) # chunks are always 512-tokens so padding is never present
+        attention_mask = torch.ones_like(input_ids, dtype=torch.bool) # chunks are always 512-tokens so padding is never present
 
         if self.content_masking:
             word_ranks = torch.stack([item['word_ranks'] for item in batch])
