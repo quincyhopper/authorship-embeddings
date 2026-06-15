@@ -15,8 +15,12 @@ class AuthorshipDataset(Dataset):
             is_validation: if True, select the first view_size texts from each author. If False, randomly sample view_size texts from each author.
             content_masking: if True, __getitem__ returns the word ranks in addition to labels and input_ids. If False, it just returns labels and input_ids.
         """
-
-        self.dataset = dataset.with_format('torch', columns=['input_ids', 'word_ids', 'word_ranks'], output_all_columns=True)
+        if content_masking:
+            columns = ['input_ids', 'word_ranks']
+        else:
+            columns = ['input_ids']
+        
+        self.dataset = dataset.with_format('torch', columns=columns, output_all_columns=True)
         self.view_size = view_size
         self.author_list = author_list
         self.is_validation = is_validation
