@@ -27,7 +27,7 @@ class ModelWrapper(nn.Module):
         """
 
         # Transformer pass: [Mb, L, D]
-        outputs = self.transformer(input_ids, attention_mask)
+        outputs = self.transformer(input_ids=input_ids, attention_mask=attention_mask)
         token_embeddings = outputs.last_hidden_state
 
         # Mean pooling: [Mb, D]

@@ -78,12 +78,12 @@ class ContrastiveTrainer(L.LightningModule):
         return minibatch_input_ids, minibatch_attention_mask
 
     def _process_minibatch(self, id, mask, anchors, start, batch_size, view_size, labels):
-        rep = anchors.clone()                           # Make copy of current batch embeddings
-        end = start + id.shape[0]                       # Calculte minibatch indices
-        rep[start:end] = self.model(id, mask)           # Replace frozen embedding with fresh embeddings for this chunk
-        rep_views = rep.view(batch_size, view_size, -1) # Reshape back to 3D tensor: [B, V, D]
-        loss = self.loss_func(rep_views, labels)        # Compute loss
-        self.manual_backward(loss)                      # Compute gradients
+        rep = anchors.clone()                                          # Make copy of current batch embeddings
+        end = start + id.shape[0]                                      # Calculte minibatch indices
+        rep[start:end] = self.model(input_ids=id, attention_mask=mask) # Replace frozen embedding with fresh embeddings for this chunk
+        rep_views = rep.view(batch_size, view_size, -1)                # Reshape back to 3D tensor: [B, V, D]
+        loss = self.loss_func(rep_views, labels)                       # Compute loss
+        self.manual_backward(loss)                                     # Compute gradients
 
         return loss.detach()
 
@@ -98,7 +98,7 @@ class ContrastiveTrainer(L.LightningModule):
 
         # 1. Compute embeddings for entire batch with no gradients
         with torch.no_grad():
-            anchors = torch.vstack([self.model(id, mask) for id, mask in zip(minibatch_input_ids, minibatch_attention_mask)])
+            anchors = torch.vstack([self.model(input_ids=id, attention_mask=mask) for id, mask in zip(minibatch_input_ids, minibatch_attention_mask)])
 
         # 2. Accumulate gradients and loss via minibatches
         start = 0
@@ -132,7 +132,7 @@ class ContrastiveTrainer(L.LightningModule):
 
         # Compute embeddings (using context manager to be extra safe)
         with torch.no_grad():
-            anchors = torch.vstack([self.model(id, mask) for id, mask in zip(minibatch_input_ids, minibatch_attention_mask)])
+            anchors = torch.vstack([self.model(input_ids=id, attention_mask=mask) for id, mask in zip(minibatch_input_ids, minibatch_attention_mask)])
 
         # Reshape back to 3D tensor: [B, V, D]
         rep_views = anchors.view(batch_size, view_size, -1)
