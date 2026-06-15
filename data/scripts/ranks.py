@@ -4,28 +4,20 @@ Derive per-token word ranks from chunked data. Word ranks look like [1245314, 31
 A chunk (row) stores input_ids and word_ids boundaries. Word strings are decoded from input_ids, grouped by word_ids, and word ranks are derived from whatever word_counts.json file is present. So it is possible to change how counts are produced and then regenerate ranks WITHOUT having to re-run `chunk_datasets.py`.
 """
 
-import json
 import argparse
+import sys
 from transformers import AutoTokenizer
 from datasets import load_dataset
+from pathlib import Path
+
+ROOT_DIR = Path(__file__).resolve().parent.parent.parent
+sys.path.append(str(ROOT_DIR))
+from utils import load_rank_map
 
 PROTECTED_RANK = -1
 
 # Cache id->token list per tokenizer so we don't rebuild it on every map call.
 _ID_TO_TOKEN_CACHE = {}
-
-def load_rank_map(counts_path: str, keep_top_k: int | None = None) -> tuple[dict, int]:
-    """Load the word_counts.json file, sort it by count descending, and enumerate so position becomes rank: {word: rank} (rank 0 = most frequent)
-    
-    Optionally keep only the top-K words; everything past K collapses to OOV_RANK (lossless for any threshold <= K).
-    """
-    with open(counts_path) as f:
-        counts = json.load(f)
-    words = sorted(counts.items(), key=lambda x: x[1], reverse=True)
-    if keep_top_k is not None:
-        words = words[:keep_top_k]
-    rank_map = {w: r for r, (w, _) in enumerate(words)}
-    return rank_map, len(rank_map)  # OOV_RANK = len(rank_map): always the rarest
 
 def get_id_to_token(tokenizer):
     """Returns a list where the index is a token id and the value is its token string. Since this is called for every batch, we avoid reconstructing the list by caching it.
