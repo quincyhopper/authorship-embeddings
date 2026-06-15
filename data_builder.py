@@ -103,7 +103,7 @@ class BalancedSampler(Sampler):
             self.rank = 0
 
         # Divide global batch size evenly among GPUs to get per-GPU batch size
-        if batch_size % self.word_size != 0:
+        if batch_size % self.world_size != 0:
             raise ValueError(f"Global batch size {batch_size} must be divisible by world size {self.world_size}")
 
         self.local_batch_size = batch_size // self.world_size
