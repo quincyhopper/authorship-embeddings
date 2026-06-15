@@ -80,7 +80,7 @@ class AuthorshipCollator:
         """Take multiple outputs from AuthorshipDataset.__getitem__ and combine into one batch; create attention masks; optionally mask the input_ids,"""
 
         labels = torch.tensor([item['label'] for item in batch])
-        input_ids = torch.stack([item['input_ids'] for item in batch]) # Shape (batch_size, 512)
+        input_ids = torch.stack([item['input_ids'] for item in batch]) # Shape (batch_size, view_size, 512)
         attention_mask = torch.ones_like(input_ids) # chunks are always 512-tokens so padding is never present
 
         if self.content_masking:
@@ -169,9 +169,13 @@ class AuthorshipDataModule(L.LightningDataModule):
 
         # Build author source map 
         self.author_source_map = {}
+        seen = set()
         for row in self.train_raw.select_columns(['author', 'source']):
-            if row['author'] not in self.author_source_map:
+            if row['author'] not in seen:
                 self.author_source_map[row['author']] = row['source']
+                seen.add(row['author'])
+            if len(seen) == len(self.train_authors):
+                break # Break early if we have seen all unique authors
 
     def train_dataloader(self):
         sampler = BalancedSampler(self.train_authors, self.author_source_map, self.batch_size)
@@ -188,4 +192,5 @@ class AuthorshipDataModule(L.LightningDataModule):
             batch_size=self.batch_size, 
             shuffle=False,
             collate_fn=AuthorshipCollator(content_masking=self.content_masking, masking_threshold=self.masking_threshold), 
+            num_workers=self.num_workers,
             )
