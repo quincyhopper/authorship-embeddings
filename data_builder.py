@@ -1,4 +1,5 @@
 import torch
+import torch.distributed as dist
 import random
 import lightning as L
 from collections import defaultdict
@@ -92,26 +93,61 @@ class AuthorshipCollator:
     
 class BalancedSampler(Sampler):
     def __init__(self, author_list: list, author_source_map: dict, batch_size: int):
+        
+        # Detect distributed environment rank and world size
+        if dist.is_available() and dist.is_initialized():
+            self.world_size = dist.get_world_size()
+            self.rank = dist.get_rank()
+        else:
+            self.world_size = 1
+            self.rank = 0
 
-        self.batch_size = batch_size
+        # Divide global batch size evenly among GPUs to get per-GPU batch size
+        if batch_size % self.word_size != 0:
+            raise ValueError(f"Global batch size {batch_size} must be divisible by world size {self.world_size}")
+
+        self.local_batch_size = batch_size // self.world_size
         self.num_corpora = 4
-        if batch_size % self.num_corpora != 0:
-            raise ValueError(f"Batch size {self.batch_size} must be divisible by num corpora ({self.num_corpora})")
+
+        if self.local_batch_size % self.num_corpora != 0:
+            raise ValueError(
+                f"Per-GPU batch size {self.local_batch_size} must be divisible by the number of corpora ({self.num_corpora})")
         
         # NOTE: if anything other than 4 corpora are in the train set, this could cause weird batch sizes
-        self.samples_per_corpus = batch_size // self.num_corpora 
+        # This will be 256 when GLOBAL_BATCH_SIZE = 4096 on 4 GPUs
+        self.samples_per_corpus = self.local_batch_size // self.num_corpora 
 
-        self.source_to_idxs = defaultdict(list)
+        # Map all sources to their indices
+        full_source_to_idxs = defaultdict(list)
         for idx, author in enumerate(author_list):
             source = author_source_map[author]
-            self.source_to_idxs[source].append(idx)
+            full_source_to_idxs[source].append(idx)
+
+        # Shard each corpus list so this GPU only samples from a distinct slice
+        self.source_to_idxs = defaultdict(list)
+        for source, idxs in full_source_to_idxs.items():
+            # Sorting guarantees consistent sharding order across all parallel GPU workers
+            sorted_idxs = sorted(idxs)  
+            self.source_to_idxs[source] = sorted_idxs[self.rank::self.world_size]
+
+        self.sources = list(self.source_to_idxs.keys())
+        self.epoch = 0
 
         self.sources = list(self.source_to_idxs.keys())
 
+    def set_epoch(self, epoch: int):
+        """Required by PyTorch Lightning"""
+        self.epoch = epoch
+
     def __iter__(self):
+        
+        # Ensure shuffling changes between epochs but that across the GPUs, shufflers stay isolated
+        seed = self.epoch + self.rank * 1000
+        local_random = random.Random(seed)
+
         # Shuffle the indices of each source
         shuffled_indices = {
-            src: random.sample(idxs, len(idxs))
+            src: local_random.sample(idxs, len(idxs))
             for src, idxs in self.source_to_idxs.items()
         }
 
@@ -138,7 +174,7 @@ class BalancedSampler(Sampler):
         return (max_len + self.samples_per_corpus -1) // self.samples_per_corpus
 
 class AuthorshipDataModule(L.LightningDataModule):
-    def __init__(self, train_path, val_path, batch_size=1024, view_size=16, max_seq_len=512, num_workers=1, content_masking: bool=False, masking_threshold: int | None=None):
+    def __init__(self, train_path, val_path, batch_size=4096, view_size=16, max_seq_len=512, num_workers=1, content_masking: bool=False, masking_threshold: int | None=None):
         super().__init__()
         self.train_path = train_path
         self.val_path = val_path

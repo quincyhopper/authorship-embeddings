@@ -7,7 +7,9 @@ from data_builder import AuthorshipDataModule
 
 MODEL_CODE = 'roberta-large'
 MAX_STEPS = 3000
-GLOBAL_BATCH_SIZE = 1024
+NUM_DEVICES = 4
+PER_GPU_BATCH_SIZE = 1024
+GLOBAL_BATCH_SIZE = NUM_DEVICES * PER_GPU_BATCH_SIZE # 4096
 VIEW_SIZE = 16
 MAX_SEQ_LEN = 512
 MINIBATCH_SIZE = 48
@@ -62,13 +64,14 @@ if __name__ == "__main__":
     trainer = L.Trainer(
         max_steps=MAX_STEPS,
         accelerator="gpu",
-        devices=4,
+        devices=NUM_DEVICES,
         strategy='ddp_find_unused_parameters_true',
         precision="16-mixed",
         callbacks=[checkpoint_callback, early_stopping_callback],
         logger=[wandb_logger, csv_logger],
         log_every_n_steps=1,
-        check_val_every_n_epoch=1 # Perform validation once per epoch
+        check_val_every_n_epoch=1, # Perform validation once per epoch
+        use_distributed_sampler=False,
     )
 
     # Init trainer
