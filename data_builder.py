@@ -6,12 +6,21 @@ from datasets import load_dataset
 from torch.utils.data import Dataset, DataLoader, Sampler
 
 class AuthorshipDataset(Dataset):
-    def __init__(self, dataset, view_size: int, author_list: list, is_validation: bool=False):
+    def __init__(self, dataset, view_size: int, author_list: list, is_validation: bool=False, content_masking: bool=False):
+        """
+        Args:
+            dataset: training or validation dataset.
+            view_size: number of texts per author in a batch.
+            author_list: list of unique authors in the dataset.
+            is_validation: if True, select the first view_size texts from each author. If False, randomly sample view_size texts from each author.
+            content_masking: if True, __getitem__ returns the word ranks in addition to labels and input_ids. If False, it just returns labels and input_ids.
+        """
 
         self.dataset = dataset.with_format('torch', columns=['input_ids', 'word_ids', 'word_ranks'], output_all_columns=True)
         self.view_size = view_size
         self.author_list = author_list
         self.is_validation = is_validation
+        self.content_masking = content_masking
 
         # Only select author IDs to save memory
         # Keys: author, Values: [chunk indices]
@@ -41,30 +50,39 @@ class AuthorshipDataset(Dataset):
         else:
             sampled_idxs = random.sample(chunk_idxs, k=self.view_size)
 
-        # Fetch input_ids
         input_ids = self.dataset[sampled_idxs]['input_ids'] # [V, Seq_len]
-        word_ranks = self.dataset[sampled_idxs]['word_ranks']   # [V, Seq_len]
 
-        return {"label": index, "input_ids": input_ids, 'word_ranks': word_ranks}
+        if self.content_masking:
+            word_ranks = self.dataset[sampled_idxs]['word_ranks']   # [V, Seq_len]
+            return {"label": index, "input_ids": input_ids, 'word_ranks': word_ranks}
+        else:
+            return {"label": index, "input_ids": input_ids}
     
 class AuthorshipCollator:
-    def __init__(self, masking_threshold: int):
+    def __init__(self, content_masking: bool=False, masking_threshold: int | None=None):
         """
         Args:
-            masking_threhold (int): words with a frequency <= to this will be replaced with <mask>.
+            content_masking: if True, __call__ expects word ranks and uses them to apply a content mask. If False, it just expects labels and input_ids and does no masking.
+            masking_threhold: words with a frequency <= to threshold will be replaced with <mask>.
         """
+        if content_masking and masking_threshold is None:
+            raise ValueError("content_masking set to True but masking_threshold is None.")
+
+        self.content_masking = content_masking
         self.masking_threshold = masking_threshold
         self.mask_token_id = 50264 # roberta-large's masking token id
 
     def __call__(self, batch: list[dict]):
-        """Take multiple outputs from AuthorshipDataset.__getitem__ and combine into one batch. Also mask the input_ids and create attention masks"""
+        """Take multiple outputs from AuthorshipDataset.__getitem__ and combine into one batch; create attention masks; optionally mask the input_ids,"""
 
         labels = torch.tensor([item['label'] for item in batch])
         input_ids = torch.stack([item['input_ids'] for item in batch]) # Shape (batch_size, 512)
-        word_ranks = torch.stack([item['word_ranks'] for item in batch])
-        mask = (word_ranks <= self.masking_threshold) & (word_ranks != -1)
-        input_ids[mask] = self.mask_token_id
         attention_mask = torch.ones_like(input_ids) # chunks are always 512-tokens so padding is never present
+
+        if self.content_masking:
+            word_ranks = torch.stack([item['word_ranks'] for item in batch])
+            mask = (word_ranks <= self.masking_threshold) & (word_ranks != -1)
+            input_ids[mask] = self.mask_token_id
 
         return input_ids, attention_mask, labels
     
@@ -116,7 +134,7 @@ class BalancedSampler(Sampler):
         return (max_len + self.samples_per_corpus -1) // self.samples_per_corpus
 
 class AuthorshipDataModule(L.LightningDataModule):
-    def __init__(self, train_path, val_path, batch_size=1024, view_size=16, max_seq_len=512, num_workers=1, masking_threshold: int=0):
+    def __init__(self, train_path, val_path, batch_size=1024, view_size=16, max_seq_len=512, num_workers=1, content_masking: bool=False, masking_threshold: int | None=None):
         super().__init__()
         self.train_path = train_path
         self.val_path = val_path
@@ -124,6 +142,11 @@ class AuthorshipDataModule(L.LightningDataModule):
         self.view_size = view_size
         self.max_seq_len = max_seq_len
         self.num_workers = num_workers
+
+        if content_masking and masking_threshold is None:
+            raise ValueError(f"content_masking set to True but masking_threshold is None.")
+        
+        self.content_masking = content_masking
         self.masking_threshold = masking_threshold
 
     def setup(self, stage=None):
@@ -137,8 +160,8 @@ class AuthorshipDataModule(L.LightningDataModule):
         val_authors = self.val_raw.unique('author')
 
         # Init Dataset objects
-        self.train_ds = AuthorshipDataset(self.train_raw, self.view_size, self.train_authors)
-        self.val_ds = AuthorshipDataset(self.val_raw, self.view_size, val_authors, is_validation=True)
+        self.train_ds = AuthorshipDataset(self.train_raw, self.view_size, self.train_authors, content_masking=self.content_masking)
+        self.val_ds = AuthorshipDataset(self.val_raw, self.view_size, val_authors, is_validation=True, content_masking=self.content_masking)
 
         # Build author source map 
         self.author_source_map = {}
@@ -151,7 +174,7 @@ class AuthorshipDataModule(L.LightningDataModule):
         return DataLoader(
             self.train_ds, 
             batch_sampler=sampler,
-            collate_fn=AuthorshipCollator(self.masking_threshold), 
+            collate_fn=AuthorshipCollator(content_masking=self.content_masking, masking_threshold=self.masking_threshold), 
             num_workers=self.num_workers, 
             )
     
@@ -160,5 +183,5 @@ class AuthorshipDataModule(L.LightningDataModule):
             self.val_ds, 
             batch_size=self.batch_size, 
             shuffle=False,
-            collate_fn=AuthorshipCollator(self.masking_threshold), 
+            collate_fn=AuthorshipCollator(content_masking=self.content_masking, masking_threshold=self.masking_threshold), 
             )
