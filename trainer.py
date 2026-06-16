@@ -137,20 +137,38 @@ class ContrastiveTrainer(L.LightningModule):
         gathered_embeddings = self.all_gather(torch.cat(self.val_embeddings, dim=0)) # (n_GPU, B, V, D)
         gathered_labels = self.all_gather(torch.cat(self.val_labels, dim=0))
 
-        d_model = gathered_embeddings.shape[-1]
-        embeddings_flat = gathered_embeddings.view(-1, d_model) # (n_authors*views, d_model)
-        labels_flat = gathered_labels.view(-1).repeat_interleave(d_model) # Expand labels to match every instance view
+        embeddings = gathered_embeddings.view(-1, gathered_embeddings.shape[-2], gathered_embeddings.shape[-1]) # (1024, 16, 512)
+        labels = gathered_labels.view(-1) # (1024,)
 
         # only master GPU does the KNN
         if self.trainer.is_global_zero:
-            norms = F.normalize(embeddings_flat, p=2, dim=1)
-            sim_matrix = torch.matmul(norms, norms.T) # i,j is cosine sim between text_i and text_j
-            sim_matrix.fill_diagonal_(-float('inf')) # mask same-text comparisons
+            n_authors, n_views, d_model = embeddings.shape
+            
+            all_preds = []
+            all_trues = []
 
-            # Find index of the SINGLE closest embedding for each row
-            top1_indices = torch.argmax(sim_matrix, dim=-1) # shape (16394,)
-            y_pred = labels_flat[top1_indices].detach().cpu().numpy()
-            y_true = labels_flat.detach().cpu().numpy()
+            # 16-fold cross-validation 
+            for v in range(n_views):
+                support_vecs = embeddings[:, v, :] # One text per author
+                queries = torch.cat([embeddings[:, :v, :], embeddings[:, v+1:, :]], dim=1) # Extract the other 15 texts per author
+                query_vecs = queries.view(-1, d_model) # Flatten (15360, 512)
+                query_labels = labels.repeat_interleave(n_views - 1) # (15360,
+                
+                # Compute cosine similarity of queries with all supports
+                support_norms = F.normalize(support_vecs, p=2, dim=-1)
+                query_norms = F.normalize(query_vecs, p=2, dim=-1)
+                sim_matrix = torch.matmul(query_norms, support_norms.T)
+                
+                # Select index of closest match in the 1024 pool
+                top1_indices = torch.argmax(sim_matrix, dim=-1) # (15360,)
+                preds = labels[top1_indices]
+
+                all_preds.append(preds)
+                all_trues.append(query_labels)
+
+            # Concat results from cross-validations
+            y_pred = torch.cat(all_preds).detach().cpu().numpy()
+            y_true = torch.cat(all_trues).detach().cpu().numpy()
 
             report = classification_report(y_true, y_pred, output_dict=True, zero_division=0)
             self.log("val_macro_precision", report["macro avg"]["precision"], rank_zero_only=True)
