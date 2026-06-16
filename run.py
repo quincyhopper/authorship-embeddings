@@ -1,6 +1,6 @@
 import torch
 import lightning as L
-from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
+from lightning.pytorch.callbacks import EarlyStopping
 from lightning.pytorch.loggers import WandbLogger, CSVLogger
 from trainer import ContrastiveTrainer
 from data_builder import AuthorshipDataModule
@@ -25,16 +25,6 @@ if __name__ == "__main__":
     torch.set_float32_matmul_precision('medium')
 
     RUN_NAME = 'sanity_check'
-
-    # Init model checkpoint
-    checkpoint_callback = ModelCheckpoint(
-        monitor="val_loss",
-        dirpath="checkpoints/",
-        filename="star-{epoch:02d}-{val_loss:.2f}",
-        save_top_k=1,
-        mode="min",
-        every_n_train_steps=250
-    )
 
     # Init early stoppping
     early_stopping_callback = EarlyStopping(
@@ -67,7 +57,8 @@ if __name__ == "__main__":
         devices=NUM_DEVICES,
         strategy='ddp_find_unused_parameters_true',
         precision="16-mixed",
-        callbacks=[checkpoint_callback, early_stopping_callback],
+        callbacks=[early_stopping_callback],
+        enable_checkpointing=False,
         logger=[wandb_logger, csv_logger],
         log_every_n_steps=1,
         check_val_every_n_epoch=1, # Perform validation once per epoch
@@ -88,3 +79,4 @@ if __name__ == "__main__":
 
     # 3. Train
     trainer.fit(model, data_module)
+    trainer.save_checkpoint(f'data/{RUN_NAME}.ckpt')
