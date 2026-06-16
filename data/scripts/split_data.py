@@ -58,7 +58,7 @@ def split_datasets(data_dir: Path, authors_per_val: int=256, gutenberg_train_aut
                 FROM chunks_indexed c
                 JOIN val_authors v ON c.source = v.source AND c.author = v.author
             )
-            SELECT * EXCLUDE(chunk_rn) FROM ranked WHERE chunk_rn <= 16
+            SELECT * EXCLUDE(chunk_rn) FROM ranked
         ) TO '{val_output_path}' (FORMAT parquet, COMPRESSION snappy);
     """)
     

@@ -13,7 +13,7 @@ class AuthorshipDataset(Dataset):
             dataset: training or validation dataset.
             view_size: number of texts per author in a batch.
             author_list: list of unique authors in the dataset.
-            is_validation: if True, select the first view_size texts from each author. If False, randomly sample view_size texts from each author.
+            is_validation: if True, we deterministically sample chunks during the init so that we can compare performance across epochs. If False, we simply sample view_size chunks per author.
             content_masking: if True, __getitem__ returns the word ranks in addition to labels and input_ids. If False, it just returns labels and input_ids.
         """
         if content_masking:
@@ -27,20 +27,30 @@ class AuthorshipDataset(Dataset):
         self.is_validation = is_validation
         self.content_masking = content_masking
 
-        # Only select author IDs to save memory
-        # Keys: author, Values: [chunk indices]
         self.author_chunk_idxs = defaultdict(list)
         for chunk_idx, author in enumerate(dataset['author']):
             self.author_chunk_idxs[author].append(chunk_idx)
+
+        # Compute chunk indices for validation
+        if self.is_validation:
+            self.val_sample_idxs = {}
+            for author in author_list:
+                chunks = self.author_chunk_idxs[author]
+
+                # Reproducible sampling
+                seed = hash(author) % 2**32
+                local_rng = random.Random(seed)
+                self.val_sample_idxs[author] = local_rng.sample(chunks, k=self.view_size)
 
     def __len__(self):
         return len(self.author_list)
     
     def __getitem__(self, index: int) -> dict:
-        """Called repeatedly by DataLoader to make a batch. If validation dataset, we take the first view_size chunks from the author.
+        """
+        Called repeatedly by DataLoader to make a batch. If training set, we randomly sample view_size chunks from each author. If validation set, we use the samples derived during the init.
         
         Args:
-            index: index of an author in self.author_ids
+            index: index of an author in self.author_list
 
         Returns:
             Dictionary where values are lists. A batch of these get passed to AuthorshipCollator.__call__.
@@ -48,11 +58,11 @@ class AuthorshipDataset(Dataset):
         
         # Sample chunks indices from this author
         author = self.author_list[index]
-        chunk_idxs = self.author_chunk_idxs[author]
 
         if self.is_validation:
-            sampled_idxs = chunk_idxs[:self.view_size] # Deterministically get chunks
+            sampled_idxs = self.val_sample_idxs[author]
         else:
+            chunk_idxs = self.author_chunk_idxs[author]
             sampled_idxs = random.sample(chunk_idxs, k=self.view_size)
 
         input_ids = self.dataset[sampled_idxs]['input_ids'] # [V, Seq_len]
