@@ -79,4 +79,5 @@ if __name__ == "__main__":
 
     # 3. Train
     trainer.fit(model, data_module)
-    trainer.save_checkpoint(f'data/{RUN_NAME}.ckpt')
+    if trainer.is_global_zero():
+        torch.save(model.state_dict(), f'checkpoints/{RUN_NAME}.pt')
