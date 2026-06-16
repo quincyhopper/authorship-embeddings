@@ -6,19 +6,6 @@ from loss import SupConLoss
 from transformers import get_linear_schedule_with_warmup
 from sklearn.metrics import classification_report
 
-def predict_knn(support_vecs, query_vecs, support_labels, k: int=1):
-    support_norm = F.normalize(support_vecs)
-    query_norm = F.normalize(query_vecs)
-    sim_matrix = torch.matmul(query_norm, support_norm.T) # i,j is the similarity between query_i and support_j
-    _, topk_indices = torch.topk(sim_matrix, k=k)
-    topk_labels = support_labels[topk_indices]
-
-    if k == 1:
-        return topk_labels.squeeze(-1)
-    else:
-        preds, _ = torch.mode(topk_labels) # Compute majority vote along dim=-1
-        return preds
-
 class ContrastiveTrainer(L.LightningModule):
     def __init__(
             self, 
@@ -150,25 +137,20 @@ class ContrastiveTrainer(L.LightningModule):
         gathered_embeddings = self.all_gather(torch.cat(self.val_embeddings, dim=0)) # (n_GPU, B, V, D)
         gathered_labels = self.all_gather(torch.cat(self.val_labels, dim=0))
 
-        embeddings = gathered_embeddings.view(-1, gathered_embeddings.shape[-2], gathered_embeddings.shape[-1]) # (n_authors, views, d_model)
-        labels = gathered_labels.view(-1)
-
-        n_support = self.hparams.knn_n_support
-        n_views = embeddings.shape[1]
-        d_model = embeddings.shape[2]
-        n_query = n_views - n_support # 15 query texts per author
+        d_model = gathered_embeddings.shape[-1]
+        embeddings_flat = gathered_embeddings.view(-1, d_model) # (n_authors*views, d_model)
+        labels_flat = gathered_labels.view(-1).repeat_interleave(d_model) # Expand labels to match every instance view
 
         # only master GPU does the KNN
         if self.trainer.is_global_zero:
-            support_vecs = embeddings[:, :n_support, :].reshape(-1, d_model) # (1024 * n_support, d_model)
-            query_vecs = embeddings[:, n_support:, :].reshape(-1, d_model)   # (1024 * n_query, d_model)
- 
-            support_labels = labels.repeat_interleave(n_support)
-            query_labels = labels.repeat_interleave(n_query)
+            norms = F.normalize(embeddings_flat, p=2, dim=1)
+            sim_matrix = torch.matmul(norms, norms.T) # i,j is cosine sim between text_i and text_j
+            sim_matrix.fill_diagonal_(-float('inf')) # mask same-text comparisons
 
-            # --- KNN Evaluation ---
-            y_pred = predict_knn(support_vecs, query_vecs, support_labels, k=self.hparams.knn_k).detach().cpu().numpy()
-            y_true = query_labels.detach().cpu().numpy()
+            # Find index of the SINGLE closest embedding for each row
+            top1_indices = torch.argmax(sim_matrix, dim=-1) # shape (16394,)
+            y_pred = labels_flat[top1_indices].detach().cpu().numpy()
+            y_true = labels_flat.detach().cpu().numpy()
 
             report = classification_report(y_true, y_pred, output_dict=True, zero_division=0)
             self.log("val_macro_precision", report["macro avg"]["precision"], rank_zero_only=True)
