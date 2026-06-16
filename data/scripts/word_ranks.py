@@ -1,5 +1,5 @@
 """
-Derive per-token word ranks from chunked data. Word ranks look like [1245314, 312312, 4323, ...]. This is used for masking during training. This script copies the provided parquet file (e.g. train.parquet) and just adds the new `word_ranks` column. 
+Derive per-token word ranks from chunked data. Word ranks look like [1245314, 312312, 4323, ...]. This is used for masking during training. This script copies the provided parquet file (e.g. train.parquet) and just adds the new `ranks` column. 
 
 A chunk (row) stores input_ids and word_ids boundaries. Word strings are decoded from input_ids, grouped by word_ids, and word ranks are derived from whatever word_counts.json file is present. So it is possible to change how counts are produced and then regenerate ranks WITHOUT having to re-run `chunk_datasets.py`.
 """
@@ -69,7 +69,7 @@ def _map_batch(batch, tokenizer, rank_map, oov_rank):
     """Run derive_ranks() on all the texts in a batch. This is applied by the .map method in materialise()."""
     id_to_token = get_id_to_token(tokenizer)
     return {
-        "word_ranks": [
+        "ranks": [
             derive_ranks(ids, wids, tokenizer, rank_map, oov_rank, id_to_token)
             for ids, wids in zip(batch["input_ids"], batch["word_ids"])
         ]
