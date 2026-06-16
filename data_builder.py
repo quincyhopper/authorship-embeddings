@@ -17,7 +17,7 @@ class AuthorshipDataset(Dataset):
             content_masking: if True, __getitem__ returns the word ranks in addition to labels and input_ids. If False, it just returns labels and input_ids.
         """
         if content_masking:
-            columns = ['input_ids', 'word_ranks']
+            columns = ['input_ids', 'ranks']
         else:
             columns = ['input_ids']
         
@@ -68,8 +68,8 @@ class AuthorshipDataset(Dataset):
         input_ids = self.dataset[sampled_idxs]['input_ids'] # [V, Seq_len]
 
         if self.content_masking:
-            word_ranks = self.dataset[sampled_idxs]['word_ranks']   # [V, Seq_len]
-            return {"label": index, "input_ids": input_ids, 'word_ranks': word_ranks}
+            ranks = self.dataset[sampled_idxs]['ranks']   # [V, Seq_len]
+            return {"label": index, "input_ids": input_ids, 'ranks': ranks}
         else:
             return {"label": index, "input_ids": input_ids}
     
@@ -78,7 +78,7 @@ class AuthorshipCollator:
         """
         Args:
             content_masking: if True, __call__ expects word ranks and uses them to apply a content mask. If False, it just expects labels and input_ids and does no masking.
-            masking_threhold: words with a frequency <= to threshold will be replaced with <mask>.
+            masking_threhold: words with a rank >= to threshold will be replaced with <mask>.
         """
         if content_masking and masking_threshold is None:
             raise ValueError("content_masking set to True but masking_threshold is None.")
@@ -95,8 +95,8 @@ class AuthorshipCollator:
         attention_mask = torch.ones_like(input_ids, dtype=torch.bool) # chunks are always 512-tokens so padding is never present
 
         if self.content_masking:
-            word_ranks = torch.stack([item['word_ranks'] for item in batch])
-            mask = (word_ranks <= self.masking_threshold) & (word_ranks != -1)
+            ranks = torch.stack([item['ranks'] for item in batch])
+            mask = (ranks >= self.masking_threshold) & (ranks != -1)
             input_ids[mask] = self.mask_token_id
 
         return input_ids, attention_mask, labels
