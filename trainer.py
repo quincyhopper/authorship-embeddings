@@ -14,9 +14,6 @@ class ContrastiveTrainer(L.LightningModule):
             minibatch_size=8, 
             weight_decay=0.01, 
             warmup_steps=180,
-            knn_k=1,
-            knn_n_support=1,
-            knn_n_authors=1024,
             ):
         super().__init__()
 
@@ -26,9 +23,6 @@ class ContrastiveTrainer(L.LightningModule):
         self.weight_decay = weight_decay
         self.warmup_steps = warmup_steps
         self.loss_func = SupConLoss(temperature=.07)
-        self.knn_k = knn_k
-        self.knn_n_support = knn_n_support
-        self.knn_n_authors = knn_n_authors
         self.save_hyperparameters()
 
         self.automatic_optimization = False
