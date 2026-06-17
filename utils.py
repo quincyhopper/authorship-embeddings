@@ -98,6 +98,23 @@ def generate_embeddings(
 
     return F.normalize(X, p=2, dim=-1)
 
+def build_siamese_pair(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
+    """
+    Concatenate embeddings to form a siamese pair for authorship verifcation.
+    Concatenates: [A, B, abs(A - B), A * B]
+
+    Args:
+        a: Tensor of shape (d) or (bs, d)
+        b: Tensor of shape (d) or (bs, d)
+
+    Returns:
+        torch.Tensor: combined feature tensor. Shape (4*d) or (bs, 4*d)
+    """
+
+    abs_diff = torch.abs(a-b)
+    product = a * b
+    return torch.cat([a, b, abs_diff, product], dim=-1)
+
 class DummyModel(nn.Module):
     """Dummy model class for testing code. Simply returns the input ids."""
     def __init__(self):
