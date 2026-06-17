@@ -6,7 +6,7 @@ from trainer import ContrastiveTrainer
 from data_builder import AuthorshipDataModule
 
 MODEL_CODE = 'roberta-large'
-MAX_STEPS = 3000
+MAX_STEPS = 450
 NUM_DEVICES = 4
 PER_GPU_BATCH_SIZE = 1024
 GLOBAL_BATCH_SIZE = NUM_DEVICES * PER_GPU_BATCH_SIZE # 4096
@@ -15,7 +15,7 @@ MAX_SEQ_LEN = 512
 MINIBATCH_SIZE = 48
 LR = 1e-5
 WEIGHT_DECAY = 1e-4
-WARMUP_STEPS = 180
+WARMUP_STEPS = 27
 NUM_WORKERS = 8
 
 TRAIN_PATH = ['data/train.parquet']
