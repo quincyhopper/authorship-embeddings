@@ -4,10 +4,13 @@ from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger, CSVLogger
 from trainer import ContrastiveTrainer
 from data_builder import AuthorshipDataModule
+from utils import calculate_masking_threshold
 
 MODEL_CODE = 'roberta-large'
-MAX_STEPS = 450
 NUM_DEVICES = 4
+NUM_WORKERS = 8
+
+MAX_STEPS = 450
 PER_GPU_BATCH_SIZE = 1024
 GLOBAL_BATCH_SIZE = NUM_DEVICES * PER_GPU_BATCH_SIZE # 4096
 VIEW_SIZE = 16
@@ -16,7 +19,11 @@ MINIBATCH_SIZE = 48
 LR = 1e-5
 WEIGHT_DECAY = 1e-4
 WARMUP_STEPS = 27
-NUM_WORKERS = 8
+
+CONTENT_MASKING = True
+MASKING_STRATEGY = 'percentile'
+MASKING_VALUE = 0.70
+COUNTS_PATH = "data/token_counts.json"
 
 TRAIN_PATH = ['data/train.parquet']
 VAL_PATH = ['data/val.parquet']
@@ -24,7 +31,17 @@ VAL_PATH = ['data/val.parquet']
 if __name__ == "__main__":
     torch.set_float32_matmul_precision('medium')
 
-    RUN_NAME = 'sanity_check'
+    # Naming convention: model_[strategy]_[value]
+    # E.g. model_baseline, model_topk_1000, model_pct_80, model_freq_1e4
+    RUN_NAME = 'model_pct_70'
+
+    if CONTENT_MASKING:
+        MASKING_THRESHOLD = calculate_masking_threshold(COUNTS_PATH, MASKING_STRATEGY, MASKING_VALUE)
+        print(f"\n--- Masking Parameters ---")
+        print(f"Strategy: {MASKING_STRATEGY} ({MASKING_VALUE})")
+        print(f"Threshold: tokens with rank >= {MASKING_THRESHOLD} will be masked.\n")
+    else:
+        MASKING_THRESHOLD = None
 
     early_stopping_callback = EarlyStopping(
         monitor='val_loss',
@@ -54,8 +71,8 @@ if __name__ == "__main__":
         view_size=VIEW_SIZE,
         max_seq_len=MAX_SEQ_LEN,
         num_workers=NUM_WORKERS,
-        content_masking=False,
-        masking_threshold=None,
+        content_masking=CONTENT_MASKING,
+        masking_threshold=MASKING_THRESHOLD,
     )
 
     # Init Lightning Trainer

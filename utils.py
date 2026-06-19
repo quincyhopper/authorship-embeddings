@@ -2,6 +2,7 @@ import json
 import torch
 import torch.nn.functional as F
 import torch.nn as nn
+from pathlib import Path
 from model import ModelWrapper
 
 def load_rank_map(
@@ -123,3 +124,49 @@ class DummyModel(nn.Module):
     
     def forward(self, input_ids, mask, **kwargs):
         return input_ids.float()
+    
+def calculate_masking_threshold(counts_path: str, strategy: str, value: float) -> int:
+    """
+    Calculate the integer rank boundary under which tokens are kept unmasked. Tokens with rank >= returned_integer will be replaced with <mask>.
+    This allows us to apply different strategies without recomputing ranks or frequencies, as the data_builder.py only use a rank integer.
+
+    Args:
+        counts_path (str): filepath to the counts.json file (word or token).
+        strategy (str): 'top_k', 'percentile', or 'relative_frequency'.
+        value (int): parameter for the specified strategy.
+
+    Returns:
+        integer rank boundary. 
+    """
+    if not Path(counts_path).exists():
+        raise FileNotFoundError(f"Counts file not found at {counts_path}")
+    
+    if strategy == 'top_k':
+        # Keep top K most frequent tokens unmasked
+        return int(value)
+    
+    with open(counts_path, 'r', encoding='utf-8') as f:
+        counts = json.load(f)
+
+    sorted_counts = sorted(counts.values(), reverse=True) # Descending order
+    total_unique_tokens = len(sorted_counts)
+
+    if strategy == 'percentile':
+        # Keep top % most frequent tokens unmasked
+        if not (0.0 <= value <= 1.0):
+            raise ValueError(f"Percentile must be a fraction between 0.0 and 1.0")
+        return int(total_unique_tokens * value)
+    
+    elif strategy == 'relative_frequency':
+        # Keep tokens unmasked only if their relative frequency >= value
+        total_token_occurences = sum(sorted_counts)
+        keep_count = 0
+        for count in sorted_counts:
+            rel_freq = count / total_token_occurences
+            if rel_freq >= value:
+                keep_count += 1
+            else:
+                break
+        return keep_count
+    else:
+        raise ValueError(f"Unknown strategy: {strategy}")
