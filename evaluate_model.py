@@ -1,127 +1,195 @@
+"""
+This script is for testing a model on the lambda g corpora and saving predictions.
+"""
+import pyreadr 
 import torch
-import pandas as pd
 import numpy as np
-from itertools import product
-from torch.utils.data import TensorDataset, DataLoader
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.preprocessing import LabelEncoder, normalize
-from model import ModelWrapper
+import pandas as pd
+from transformers import AutoTokenizer
+from sklearn.metrics import classification_report
+from sklearn.linear_model import LogisticRegression
 
-def load_model(device):
-    # Load model
-    ckpt = torch.load('checkpoints/star-epoch=99-val_loss=4.46.ckpt', map_location='cuda')
-    state_dict = ckpt['state_dict']
+from utils import load_model, generate_embeddings, build_siamese_pair, DummyModel
 
-    # Strip the "model." Lightning prefix
-    prefix = "model."
-    stripped = {k[len(prefix):]: v for k, v in state_dict.items() if k.startswith(prefix)}
+def load_data():
+    # Load raw data
+    train_data = pyreadr.read_r('data/lambdag_data/flat_train_data.rds')[None]
+    test_data = pyreadr.read_r('data/lambdag_data/flat_test_data.rds')[None]
+    train_probs = pyreadr.read_r('data/lambdag_data/training_problems.rds')[None]
+    test_probs = pyreadr.read_r('data/lambdag_data/test_problems.rds')[None]
 
-    model = ModelWrapper("roberta-large").to(device)
-    model.load_state_dict(stripped, strict=True)
-    
-    return model
+    # Filter Reddit and Blogs
+    train_data = train_data[~train_data['corpus'].isin(['Reddit', "Koppel's Blogs"])]
+    test_data = test_data[~test_data['corpus'].isin(['Reddit', "Koppel's Blogs"])]
 
-@torch.no_grad()
-def generate_embeddings(df: pd.DataFrame, model, device):
-    model.eval()
+    return train_data, test_data, train_probs, test_probs
 
-    # Stack input ids and attention masks
-    ids = torch.tensor(np.stack(df['input_ids'].values))
-    mask = torch.tensor(np.stack(df['attention_mask'].values))
-
-    # Make dataset and loader for generating embeddings
-    dataset = TensorDataset(ids, mask)
-    loader = DataLoader(dataset, batch_size=64, shuffle=False)
-
-    # Generate embeddings
-    all_embeddings = []
-    for ids, mask in loader:
-        ids, mask = ids.to(device), mask.to(device)
-        emb = model(ids, mask)
-        all_embeddings.append(emb.cpu().numpy())
-
-    # Stack embeddings
-    X = np.concatenate(all_embeddings, axis=0)
-
-    return normalize(X, norm='l2')
-
-def get_train_test_indices(y, k, n, author_counts):
+def get_problem_texts(data: pd.DataFrame, probs: pd.DataFrame, corpus_name: str=""):
     """
+    Fetch the Q and K texts from the data using the problems dataset.
+    
     Args:
-        y: array of encoded authors.
-        k: support level.
-        n: author level.
-        author_counts: number of texts per author. 
+        data: dataframe containing the texts.
+        probs: dataframe containing the problem pairs.
+        corpus_name: name of the corpus (just used for printing).
 
     Returns:
-        train indices and test indices
+        lists of known_texts, unknown_texts, labels, and metadata (K and Q authors).
     """
+    known_texts = []
+    questioned_texts = []
+    labels = []
+    metadata = []
+    
+    missing_k = 0
+    missing_q = 0
+    multiple_k = 0
+    multiple_q = 0
+    success_count = 0
 
-    # Authors that have at least k texts
-    valid_authors = np.where(author_counts >= k)[0]
+    for i, row in probs.iterrows():
+        k_author = row['known_author']
+        q_author = row['unknown_author']
 
-    # Skip current config if not enough valid authors
-    if n > len(valid_authors):
-        return None, None
+        k_matches = data.loc[(data['author'] == k_author) & (data['texttype'] == 'known'), 'text']
+        q_matches = data.loc[(data['author'] == q_author) & (data['texttype'] == 'unknown'), 'text']
 
-    # 1. Randomly select N authors
-    selected_authors = np.random.choice(valid_authors, n, replace=False)
+        # Track anomalies for visibility
+        if len(k_matches) == 0: missing_k += 1
+        if len(k_matches) > 1:  multiple_k += 1
+        if len(q_matches) == 0: missing_q += 1
+        if len(q_matches) > 1:  multiple_q += 1
 
-    train_idx = []
-    test_idx = []
+        # Skip only if text is genuinely missing from this slice
+        if len(k_matches) == 0 or len(q_matches) == 0:
+            continue
 
-    # 2. Randomly select n_support texts from the sampled authors
-    for auth in selected_authors:
-        auth_indices = np.where(y==auth)[0]
-        selected_texts = np.random.choice(auth_indices, k, replace=False)
+        # Grab the first available text chunk if multiple exist
+        k_text = k_matches.iloc[0]
+        q_text = q_matches.iloc[0]
+        
+        label = k_author == q_author
+        
+        known_texts.append(k_text)
+        questioned_texts.append(q_text)
+        labels.append(label)
+        metadata.append({
+            'known_author': k_author,
+            'unknown_author': q_author,
+        })
+        success_count += 1
 
-        # One text is the test and the others are the train
-        train_idx.extend(selected_texts[:-1])
-        test_idx.append(selected_texts[-1])
+    print(f"\n--- Data Mapping Diagnostics: {corpus_name} ---")
+    print(f"  Total Problems Checked: {len(probs)}")
+    print(f"  Successfully Matched:   {success_count}")
+    print(f"  Missing Known Texts:    {missing_k}")
+    print(f"  Missing Questioned:     {missing_q}")
+    print(f"  Multiple Known Matches: {multiple_k} (Resolved using first match)")
+    print(f"  Multiple Questioned:    {multiple_q} (Resolved using first match)")
 
-    return train_idx, test_idx
+    return known_texts, questioned_texts, labels, metadata
 
 if __name__ == "__main__":
+    # Load data
+    print("Loading data", flush=True)
+    train_data, test_data, train_probs, test_probs = load_data()
+
+    print("Loading model", flush=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model_path = 'checkpoints/star-epoch=68-val_loss=3.94.ckpt'
+    model = load_model(model_path, device)
+    #model = DummyModel()
 
-    df = pd.read_parquet('data/reddit_val.parquet')
+    tokenizer = AutoTokenizer.from_pretrained('roberta-large')
+    tokenizer.add_special_tokens({'additional_special_tokens': ["<u>", "<h>"]})
 
-    model = load_model(device)
-
-    le = LabelEncoder()
-    y = le.fit_transform(df['author'])
-    author_counts = np.bincount(y) # Count number of texts per author
-    X = generate_embeddings(df, model, device)
-
-    support_levels = [2, 3, 4, 9]
-    author_levels = [10, 20, 50, 100, 250, 500, 1000]
-    combos = list(product(support_levels, author_levels))
-
-    results = []
-    for n_support, n_authors in combos:
-
-        trial_accuracies = []
-        for trial in range(100):
-            train_idx, test_idx = get_train_test_indices(y, n_support, n_authors, author_counts)
-
-            if train_idx is None:
-                break # Skip this combo if not enough authors
-
-            X_train, X_test = X[train_idx], X[test_idx]
-            y_train, y_test = y[train_idx], y[test_idx]
-
-            knn = KNeighborsClassifier(n_neighbors=1, metric='cosine')
-            knn.fit(X_train, y_train)
-            acc = knn.score(X_test, y_test)
-            trial_accuracies.append(acc)
+    corpora = [
+        'All-the-news',
+        'IMDB',
+        'TripAdvisor',
+        'Wiki',
+        'ACL',
+        'Amazon',
+        'The Apricity',
+        'Enron',
+        'Perverted Justice',
+        'StackExchange',
+        'The Telegraph',
+        'Yelp'
+    ]
+    
+    results = {}
+    all_test_predictions = []  # Container to hold metadata + predictions across all corpora
+    
+    for corpus in corpora:
+        print(f"\n================ Processing Corpus: {corpus} ================")
         
-        results.append({
-            'n_authors': n_authors,
-            'n_support': n_support,
-            'mean_acc': np.mean(trial_accuracies),
-            'std_acc': np.std(trial_accuracies)
-        })
+        # TRAINING SET EMBEDDINGS
+        train_corp = train_data[train_data['corpus'] == corpus]
+        local_train_probs = train_probs[train_probs['corpus'] == corpus]
 
-    results_df = pd.DataFrame(results)
-    pivot_table = results_df.pivot(index='n_authors', columns='n_support', values='mean_acc')
-    print(pivot_table)
+        if len(local_train_probs) == 0:
+            print(f"Skipping {corpus}: No training problems found.")
+            continue
+
+        known_train, questioned_train, labels_train, _ = get_problem_texts(train_corp, local_train_probs, corpus)
+        
+        if not labels_train:
+            print(f"Skipping {corpus}: Problems could not be matched to available texts.")
+            continue
+
+        print(f"Generating training embeddings for {len(labels_train)} pairs...")
+        k_emb_train = generate_embeddings(known_train, model, tokenizer, device, batch_size=64)
+        q_emb_train = generate_embeddings(questioned_train, model, tokenizer, device, batch_size=64)
+        
+        X_train = build_siamese_pair(k_emb_train, q_emb_train).cpu().numpy()
+        y_train = np.array(labels_train, dtype=int)
+
+        # TEST SET EMBEDDINGS
+        test_corp = test_data[test_data['corpus'] == corpus]
+        local_test_probs = test_probs[test_probs['corpus'] == corpus]
+
+        if len(local_test_probs) == 0:
+            print(f"Skipping Evaluation for {corpus}: No test problems found.")
+            continue
+
+        known_test, questioned_test, labels_test, test_meta = get_problem_texts(test_corp, local_test_probs, corpus)
+        
+        if not labels_test:
+            print(f"Skipping Evaluation for {corpus}: Test problems could not be matched to texts.")
+            continue
+
+        print(f"Generating test embeddings for {len(labels_test)} pairs...")
+        k_emb_test = generate_embeddings(known_test, model, tokenizer, device, batch_size=64)
+        q_emb_test = generate_embeddings(questioned_test, model, tokenizer, device, batch_size=64)
+        
+        X_test = build_siamese_pair(k_emb_test, q_emb_test).cpu().numpy()
+        y_test = np.array(labels_test, dtype=int)
+
+        # LOGISTIC REGRESSION FOR PREDICTIONS
+        print(f"Training Logistic Regression for {corpus}...")
+        clf = LogisticRegression(max_iter=1000, class_weight='balanced')
+        clf.fit(X_train, y_train)
+
+        y_pred = clf.predict(X_test)
+        
+        # Zip metadata, ground truth, and predictions together
+        for meta, y_true_i, y_pred_i in zip(test_meta, y_test, y_pred):
+            meta['corpus'] = corpus
+            meta['ground_truth'] = int(y_true_i)
+            meta['predicted'] = int(y_pred_i)
+            meta['correct'] = int(y_true_i == y_pred_i)
+            all_test_predictions.append(meta)
+
+        report = classification_report(y_test, y_pred)
+        results[corpus] = report
+        print(f"\nResults for {corpus}:")
+        print(report)
+
+    if all_test_predictions:
+        df_preds = pd.DataFrame(all_test_predictions)
+        output_path = 'lambdag_test_predictions.csv'
+        df_preds.to_csv(output_path, index=False)
+        print(f"\nSaved all test predictions to {output_path}")
+
+    print("\n================ All Evaluation Rounds Completed ================")
