@@ -80,9 +80,6 @@ if __name__ == "__main__":
         minibatch_size=MINIBATCH_SIZE,
         weight_decay=WEIGHT_DECAY,
         warmup_steps=WARMUP_STEPS,
-        knn_k=1,
-        knn_n_support=1,
-        knn_n_authors=1024,
     )
 
     # 3. Train
