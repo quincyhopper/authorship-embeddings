@@ -5,6 +5,7 @@ import pyreadr
 import torch
 import numpy as np
 import pandas as pd
+import argparse
 from transformers import AutoTokenizer
 from sklearn.metrics import classification_report
 from sklearn.linear_model import LogisticRegression
@@ -90,14 +91,29 @@ def get_problem_texts(data: pd.DataFrame, probs: pd.DataFrame, corpus_name: str=
     return known_texts, questioned_texts, labels, metadata
 
 if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        '--model',
+        required=True,
+        type=str,
+        help="Filepath to the model for testing."
+    )
+    parser.add_argument(
+        '--output',
+        required=True,
+        type=str,
+        help="Filepath to save the csv file."
+    )
+    args = parser.parse_args()
+
     # Load data
     print("Loading data", flush=True)
     train_data, test_data, train_probs, test_probs = load_data()
 
     print("Loading model", flush=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model_path = 'checkpoints/star-epoch=68-val_loss=3.94.ckpt'
-    model = load_model(model_path, device)
+    model = load_model(args.model, device)
     #model = DummyModel()
 
     tokenizer = AutoTokenizer.from_pretrained('roberta-large')
@@ -188,8 +204,7 @@ if __name__ == "__main__":
 
     if all_test_predictions:
         df_preds = pd.DataFrame(all_test_predictions)
-        output_path = 'lambdag_test_predictions.csv'
-        df_preds.to_csv(output_path, index=False)
-        print(f"\nSaved all test predictions to {output_path}")
+        df_preds.to_csv(args.output, index=False)
+        print(f"\nSaved all test predictions to {args.output}")
 
     print("\n================ All Evaluation Rounds Completed ================")
