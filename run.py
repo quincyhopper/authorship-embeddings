@@ -1,5 +1,7 @@
 import torch
 import lightning as L
+import argparse
+from pathlib import Path
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger, CSVLogger
 from trainer import ContrastiveTrainer
@@ -25,18 +27,35 @@ MASKING_STRATEGY = 'percentile'
 MASKING_VALUE = 0.70
 COUNTS_PATH = "data/token_counts.json"
 
-TRAIN_PATH = ['data/train.parquet']
-VAL_PATH = ['data/val.parquet']
+# Naming convention: model_[strategy]_[value]
+# E.g. model_baseline, model_topk_1000, model_pct_80, model_freq_1e4
+RUN_NAME = 'model_pct_70'
 
 if __name__ == "__main__":
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        '--base_dir',
+        type=str,
+        default='~/scratch/authorship-embeddings',
+        help="The root directory for data, checkpoints, and logs."
+    )
+    args = parser.parse_args()
+
+    base_dir = Path(args.base_dir).expanduser()
+    data_dir = base_dir / 'data'
+    checkpoint_dir = base_dir / 'checkpoints'
+    log_dir = base_dir / 'log'
+    wandb_dir = base_dir / 'wandb'
+
+    train_path = data_dir / 'train_with_ranks.parquet'
+    val_path = data_dir / 'val_with_ranks.parquet'
+    counts_path = data_dir / 'token_counts.json'
+
     torch.set_float32_matmul_precision('medium')
 
-    # Naming convention: model_[strategy]_[value]
-    # E.g. model_baseline, model_topk_1000, model_pct_80, model_freq_1e4
-    RUN_NAME = 'model_pct_70'
-
     if CONTENT_MASKING:
-        MASKING_THRESHOLD = calculate_masking_threshold(COUNTS_PATH, MASKING_STRATEGY, MASKING_VALUE)
+        MASKING_THRESHOLD = calculate_masking_threshold(counts_path, MASKING_STRATEGY, MASKING_VALUE)
         print(f"\n--- Masking Parameters ---")
         print(f"Strategy: {MASKING_STRATEGY} ({MASKING_VALUE})")
         print(f"Threshold: tokens with rank >= {MASKING_THRESHOLD} will be masked.\n")
@@ -51,7 +70,7 @@ if __name__ == "__main__":
     )
 
     checkpoint_callback = ModelCheckpoint(
-        dirpath='checkpoints/',
+        dirpath=checkpoint_dir,
         filename=RUN_NAME,
         monitor='val_loss',
         mode='min',
@@ -60,13 +79,13 @@ if __name__ == "__main__":
     )
 
     # Init loggers
-    wandb_logger = WandbLogger(project="authorship-embeddings", name=RUN_NAME)
-    csv_logger = CSVLogger(save_dir='log/', name=RUN_NAME)
+    wandb_logger = WandbLogger(project="authorship-embeddings", name=RUN_NAME, save_dir=wandb_dir)
+    csv_logger = CSVLogger(save_dir=log_dir, name=RUN_NAME)
     
     # Init data loaders
     data_module = AuthorshipDataModule(
-        train_path=TRAIN_PATH,
-        val_path=VAL_PATH, 
+        train_path=train_path,
+        val_path=val_path, 
         batch_size=GLOBAL_BATCH_SIZE, 
         view_size=VIEW_SIZE,
         max_seq_len=MAX_SEQ_LEN,
