@@ -112,7 +112,7 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         '--masking_value',
-        type=int,
+        type=float,
         help="Masking value"
     )
     parser.add_argument(
