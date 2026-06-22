@@ -84,8 +84,8 @@ if __name__ == "__main__":
     
     # Init data loaders
     data_module = AuthorshipDataModule(
-        train_path=[train_path],
-        val_path=[val_path], 
+        train_path=str(train_path),
+        val_path=str(val_path), 
         batch_size=GLOBAL_BATCH_SIZE, 
         view_size=VIEW_SIZE,
         max_seq_len=MAX_SEQ_LEN,
