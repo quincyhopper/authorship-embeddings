@@ -61,6 +61,8 @@ def generate_embeddings(
     model, 
     tokenizer,
     device, 
+    rank_tensor: torch.Tensor=None,
+    masking_threshold: int=None,
     batch_size: int=64,
     ):
     """Generate embeddings for a given dataset.
@@ -70,12 +72,17 @@ def generate_embeddings(
         model: the model returned by utils.load_model().
         tokenizer: tokenizer instance with added special tokens (<u> and <h>).
         device: cpu or cuda.
+        rank_tensor: tensor containing the rank of each token in the vocab.
+        masking_threshold: any token whose rank is >= this threshold will be masked
         batch_size: batch size.
 
     Returns:
         X: tensor of normalised embeddings.
     """
     model.eval()
+
+    if rank_tensor is not None:
+        rank_tensor = rank_tensor.to(device)
 
     all_embeddings = []
     for i in range(0, len(texts), batch_size):
@@ -91,6 +98,14 @@ def generate_embeddings(
 
         input_ids = inputs['input_ids'].to(device)
         mask = inputs['attention_mask'].to(device)
+
+        is_masking_enabled = (rank_tensor is not None and masking_threshold is not None)
+        if is_masking_enabled:
+            input_ids = apply_content_mask(
+                input_ids,
+                rank_tensor,
+                masking_threshold,
+            )
 
         embeddings = model(input_ids, mask)
         all_embeddings.append(embeddings)
@@ -170,3 +185,39 @@ def calculate_masking_threshold(counts_path: str, strategy: str, value: float) -
         return keep_count
     else:
         raise ValueError(f"Unknown strategy: {strategy}")
+    
+def create_rank_tensor(rank_map: dict, oov_rank: int, tokenizer, protected_rank: int=-1):
+    """
+    Convert token_id -> rank dictionary into a 1d lookup tensor for quick indexing.
+    """
+
+    vocab_size = len(tokenizer)
+    arr = torch.full((vocab_size,), fill_value=oov_rank, dtype=torch.int32) # Init everything with OOV
+
+    special_ids = {
+        tokenizer.bos_token_id,  # <s>
+        tokenizer.eos_token_id,  # </s>
+        tokenizer.pad_token_id,  # <pad>
+        tokenizer.unk_token_id,  # <unk>
+    }
+
+    # Special tokens get rank -1
+    for special_id in special_ids:
+        if special_id is not None:
+            arr[special_id] = protected_rank
+
+    for id, rank in rank_map.items():
+        id = int(id)
+        if id < vocab_size:
+            arr[id] = rank
+
+    return arr
+
+def apply_content_mask(input_ids: torch.Tensor, rank_tensor: torch.Tensor, threshold: int, mask_token: int=50264):
+    """
+    Apply content masking to a tensor of input_ids, for use in the generate_embeddings() function.
+    """
+    token_ranks = rank_tensor[input_ids]
+    mask = (token_ranks >= threshold) & (token_ranks > -1)
+    input_ids[mask] = mask_token
+    return input_ids

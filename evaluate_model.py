@@ -10,7 +10,7 @@ from transformers import AutoTokenizer
 from sklearn.metrics import classification_report
 from sklearn.linear_model import LogisticRegression
 
-from utils import load_model, generate_embeddings, build_siamese_pair, DummyModel
+from utils import load_model, generate_embeddings, build_siamese_pair, load_rank_map, calculate_masking_threshold, create_rank_tensor
 
 def load_data():
     # Load raw data
@@ -100,6 +100,22 @@ if __name__ == "__main__":
         help="Filepath to the model for testing."
     )
     parser.add_argument(
+        '--counts',
+        type=str,
+        default=None,
+        help='Path to counts file used for masking'
+    )
+    parser.add_argument(
+        '--strategy',
+        type=str,
+        help='Masking strategy.'
+    )
+    parser.add_argument(
+        '--masking_value',
+        type=int,
+        help="Masking value"
+    )
+    parser.add_argument(
         '--output',
         required=True,
         type=str,
@@ -116,8 +132,17 @@ if __name__ == "__main__":
     model = load_model(args.model, device)
     #model = DummyModel()
 
+    # Load tokenizer and any
     tokenizer = AutoTokenizer.from_pretrained('roberta-large')
     tokenizer.add_special_tokens({'additional_special_tokens': ["<u>", "<h>"]})
+
+    if args.counts is not None:
+        rank_map, oov_rank = load_rank_map(args.counts)
+        rank_tensor = create_rank_tensor(rank_map, oov_rank, tokenizer)
+        masking_threshold = calculate_masking_threshold(args.counts, strategy=args.strategy, value=args.masking_value)
+    else:
+        rank_tensor = None
+        masking_threshold = None
 
     corpora = [
         'All-the-news',
@@ -155,8 +180,8 @@ if __name__ == "__main__":
             continue
 
         print(f"Generating training embeddings for {len(labels_train)} pairs...")
-        k_emb_train = generate_embeddings(known_train, model, tokenizer, device, batch_size=64)
-        q_emb_train = generate_embeddings(questioned_train, model, tokenizer, device, batch_size=64)
+        k_emb_train = generate_embeddings(known_train, model, tokenizer, device, rank_tensor, masking_threshold, batch_size=64)
+        q_emb_train = generate_embeddings(questioned_train, model, tokenizer, rank_tensor, masking_threshold, device, batch_size=64)
         
         X_train = build_siamese_pair(k_emb_train, q_emb_train).cpu().numpy()
         y_train = np.array(labels_train, dtype=int)
@@ -176,8 +201,8 @@ if __name__ == "__main__":
             continue
 
         print(f"Generating test embeddings for {len(labels_test)} pairs...")
-        k_emb_test = generate_embeddings(known_test, model, tokenizer, device, batch_size=64)
-        q_emb_test = generate_embeddings(questioned_test, model, tokenizer, device, batch_size=64)
+        k_emb_test = generate_embeddings(known_test, model, tokenizer, device, rank_tensor, masking_threshold, batch_size=64)
+        q_emb_test = generate_embeddings(questioned_test, model, tokenizer, device, rank_tensor, masking_threshold, batch_size=64)
         
         X_test = build_siamese_pair(k_emb_test, q_emb_test).cpu().numpy()
         y_test = np.array(labels_test, dtype=int)
