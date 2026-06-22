@@ -181,7 +181,7 @@ if __name__ == "__main__":
 
         print(f"Generating training embeddings for {len(labels_train)} pairs...")
         k_emb_train = generate_embeddings(known_train, model, tokenizer, device, rank_tensor, masking_threshold, batch_size=64)
-        q_emb_train = generate_embeddings(questioned_train, model, tokenizer, rank_tensor, masking_threshold, device, batch_size=64)
+        q_emb_train = generate_embeddings(questioned_train, model, tokenizer, device, rank_tensor, masking_threshold, batch_size=64)
         
         X_train = build_siamese_pair(k_emb_train, q_emb_train).cpu().numpy()
         y_train = np.array(labels_train, dtype=int)
