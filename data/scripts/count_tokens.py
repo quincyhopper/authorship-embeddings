@@ -66,7 +66,7 @@ def main(file_paths: list, output_path: str='token_counts.json'):
     for path in file_paths:
         n_rows = pq.read_metadata(path).num_rows
         total_rows += n_rows
-        total_batches = (n_rows + batch_size -1) // batch_size
+        total_batches += (n_rows + batch_size -1) // batch_size
 
     print(f"Processing {len(file_paths)} files containing {total_rows:,} combined rows", flush=True)
 
@@ -127,4 +127,4 @@ if __name__ == "__main__":
         if not path.exists():
             raise FileNotFoundError(f"File path does not exist: {path}")
     
-    main(args.inputs, args.output)
+    main(file_paths, args.output)
