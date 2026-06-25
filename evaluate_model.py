@@ -10,7 +10,7 @@ from transformers import AutoTokenizer
 from sklearn.metrics import classification_report
 from sklearn.linear_model import LogisticRegression
 
-from utils import load_model, generate_embeddings, build_siamese_pair, load_rank_map, calculate_masking_threshold, create_rank_tensor
+from src.utils import load_model, generate_embeddings, build_siamese_pair, load_rank_map, calculate_masking_threshold, create_rank_tensor
 
 def load_data():
     # Load raw data

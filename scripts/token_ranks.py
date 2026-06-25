@@ -8,9 +8,9 @@ from datasets import load_dataset
 from transformers import AutoTokenizer
 from pathlib import Path
 
-ROOT_DIR = Path(__file__).resolve().parent.parent.parent
+ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(ROOT_DIR))
-from utils import load_rank_map, create_rank_tensor
+from src.utils import load_rank_map, create_rank_tensor
 
 def _map_batch(batch, lookup_table):
     input_ids = np.array(batch['input_ids'], dtype=np.int32)

@@ -4,9 +4,9 @@ import argparse
 from pathlib import Path
 from lightning.pytorch.callbacks import EarlyStopping, ModelCheckpoint
 from lightning.pytorch.loggers import WandbLogger, CSVLogger
-from trainer import ContrastiveTrainer
-from data_builder import AuthorshipDataModule
-from utils import calculate_masking_threshold
+from src.trainer import ContrastiveTrainer
+from src.data_builder import AuthorshipDataModule
+from src.utils import calculate_masking_threshold
 
 MODEL_CODE = 'roberta-large'
 NUM_DEVICES = 4

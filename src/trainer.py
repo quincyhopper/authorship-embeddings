@@ -1,8 +1,8 @@
 import torch
 import torch.nn.functional as F
 import lightning as L
-from model import ModelWrapper
-from loss import SupConLoss
+from src.model import ModelWrapper
+from src.loss import SupConLoss
 from transformers import get_linear_schedule_with_warmup
 from sklearn.metrics import classification_report
 

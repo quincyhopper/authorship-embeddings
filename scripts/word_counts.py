@@ -62,7 +62,7 @@ def count_batch(batch: dict):
     return counts
 
 if __name__ == "__main__":
-    data_dir = Path(__file__).resolve().parent.parent
+    data_dir = Path(__file__).resolve().parent.parent / 'data'
     train_path = data_dir / 'train.parquet'
 
     batch_size = 2048

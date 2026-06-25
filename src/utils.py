@@ -3,7 +3,7 @@ import torch
 import torch.nn.functional as F
 import torch.nn as nn
 from pathlib import Path
-from model import ModelWrapper
+from src.model import ModelWrapper
 
 def load_rank_map(
         counts_path: str, 

@@ -121,7 +121,7 @@ def split_datasets(data_dir: Path, authors_per_val: int=256, gutenberg_train_aut
     print("="*55)
 
 if __name__ == "__main__":
-    data_dir = Path(__file__).resolve().parent.parent
+    data_dir = Path(__file__).resolve().parent.parent / 'data'
     split_datasets(
         data_dir, 
         authors_per_val=256,

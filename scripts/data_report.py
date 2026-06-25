@@ -56,7 +56,7 @@ def resolve_paths(file_inputs: list[str], data_dir: Path) -> list[Path]:
 
 
 if __name__ == "__main__":
-    data_dir = Path(__file__).resolve().parent.parent
+    data_dir = Path(__file__).resolve().parent.parent / 'data'
     
     p = argparse.ArgumentParser(description="Generate dataset reports for arbitrary parquet files.")
     

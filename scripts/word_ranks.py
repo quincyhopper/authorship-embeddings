@@ -10,9 +10,9 @@ from transformers import AutoTokenizer
 from datasets import load_dataset
 from pathlib import Path
 
-ROOT_DIR = Path(__file__).resolve().parent.parent.parent
+ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.append(str(ROOT_DIR))
-from utils import load_rank_map
+from src.utils import load_rank_map
 
 PROTECTED_RANK = -1
 

@@ -100,7 +100,7 @@ def main(file_paths: list, output_path: str='token_counts.json'):
         if count > 0
     }
 
-    data_dir = Path(__file__).resolve().parent.parent
+    data_dir = Path(__file__).resolve().parent.parent / 'data'
     output_path = data_dir / output_path
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(output_counts_dict, f, indent=4)

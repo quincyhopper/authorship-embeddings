@@ -213,7 +213,7 @@ def chunk_datasets(tokenizer, unify: bool=True, remove_tmp: bool=True):
     print(f"Unify={unify}")
     print(f"Remove_tmp={remove_tmp}")
 
-    data_dir = Path(__file__).resolve().parent.parent
+    data_dir = Path(__file__).resolve().parent.parent / 'data'
     processed_chunks = [] if unify else None
     temporary_files = []
 
