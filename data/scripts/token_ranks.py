@@ -1,3 +1,6 @@
+import os
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
 import argparse
 import sys
 import numpy as np
@@ -20,7 +23,7 @@ def main(input_path, output_path, counts_path):
     tokenizer = AutoTokenizer.from_pretrained('roberta-large')
     tokenizer.add_special_tokens({"additional_special_tokens": ["<u>", "<h>"]})
     rank_map, oov_rank = load_rank_map(counts_path)
-    lookup_table = create_rank_tensor(rank_map, oov_rank, tokenizer)
+    lookup_table = create_rank_tensor(rank_map, oov_rank, tokenizer).numpy()
 
     ds = load_dataset('parquet', data_files=[input_path], split='train')
     ds = ds.map(
