@@ -6,12 +6,11 @@ import torch
 import numpy as np
 import pandas as pd
 import argparse
-from collections import defaultdict
 from transformers import AutoTokenizer
 from sklearn.metrics import classification_report
 from sklearn.linear_model import LogisticRegression
 
-from src.utils import load_model, generate_embeddings, build_siamese_pair, load_rank_map, calculate_masking_threshold, create_rank_tensor, DummyModel
+from src.utils import load_model, generate_embeddings, build_siamese_pair, load_rank_map, calculate_masking_threshold, create_rank_tensor
 
 def load_data():
     # Load raw data
@@ -168,8 +167,8 @@ if __name__ == "__main__":
 
     print("Loading model", flush=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    #model = load_model(args.model, device)
-    model = DummyModel()
+    model = load_model(args.model, device)
+    #model = DummyModel()
 
     # Load tokenizer and any
     tokenizer = AutoTokenizer.from_pretrained('roberta-large')
