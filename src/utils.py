@@ -70,14 +70,15 @@ def generate_embeddings(
     Args:
         texts: the text to turn into embeddings.
         model: the model returned by utils.load_model().
-        tokenizer: tokenizer instance with added special tokens (<u> and <h>).
+        tokenizer: tokenizer instance with added special tokens.
         device: cpu or cuda.
         rank_tensor: tensor containing the rank of each token in the vocab.
         masking_threshold: any token whose rank is >= this threshold will be masked
         batch_size: batch size.
 
     Returns:
-        X: tensor of normalised embeddings.
+        X_norm: tensor of normalised embeddings.
+        sample_map: list where the index is the document number and the item is the index of the corresponding document.
     """
     model.eval()
 
@@ -85,19 +86,24 @@ def generate_embeddings(
         rank_tensor = rank_tensor.to(device)
 
     all_embeddings = []
+    global_sample_map = []
+
     for i in range(0, len(texts), batch_size):
         batch_texts = texts[i: i+batch_size]
 
-        inputs = tokenizer(
+        outputs = tokenizer(
             batch_texts,
             padding=True,
             truncation=True,
             max_length=512,
             return_tensors='pt',
+            return_overflowing_tokens=True,
         )
 
-        input_ids = inputs['input_ids'].to(device)
-        mask = inputs['attention_mask'].to(device)
+        input_ids = outputs['input_ids'].to(device)
+        mask = outputs['attention_mask'].to(device)
+        sample_map = outputs.pop("overflow_to_sample_mapping")
+        global_sample_map.extend((sample_map + i).tolist())
 
         is_masking_enabled = (rank_tensor is not None and masking_threshold is not None)
         if is_masking_enabled:
@@ -111,8 +117,9 @@ def generate_embeddings(
         all_embeddings.append(embeddings)
 
     X = torch.cat(all_embeddings, dim=0)
+    X_norm = F.normalize(X, p=2, dim=-1)
 
-    return F.normalize(X, p=2, dim=-1)
+    return X_norm, global_sample_map
 
 def build_siamese_pair(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     """
