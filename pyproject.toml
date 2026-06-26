@@ -83,6 +83,7 @@ dependencies = [
     "sentence-transformers==5.2.2",
     "sentry-sdk==2.53.0",
     "setuptools==80.10.2",
+    "shap>=0.52.0",
     "shellingham==1.5.4",
     "six==1.17.0",
     "smmap==5.0.2",
