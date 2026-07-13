@@ -25,83 +25,6 @@ def load_data():
 
     return train_data, test_data, train_probs, test_probs
 
-def get_problem_texts(data: pd.DataFrame, probs: pd.DataFrame, corpus_name: str=""):
-    """
-    Fetch the Q and K texts from the data using the problems dataset.
-    
-    Args:
-        data: dataframe containing the texts.
-        probs: dataframe containing the problem pairs.
-        corpus_name: name of the corpus (just used for printing).
-
-    Returns:
-        lists of known_texts, unknown_texts, labels, and metadata (K and Q authors).
-    """
-    known_texts = []
-    questioned_texts = []
-    labels = []
-    metadata = []
-    
-    missing_k = 0
-    missing_q = 0
-    multiple_k = 0
-    multiple_q = 0
-    success_count = 0
-
-    # Filter the known and unknown texts
-    known_df = data[data['texttype'] == 'known']
-    unknown_df = data[data['texttype'] == 'unknown']
-    
-    # Concatenate texts by an author to prepare for centroiding
-    known_texts_dict = known_df.groupby('author')['text'].apply(lambda x: " ".join(x.astype(str))).to_dict()
-    unknown_texts_dict = unknown_df.groupby('author')['text'].apply(lambda x: " ".join(x.astype(str))).to_dict()
-    
-    # Make dicts for fast lookup
-    known_counts_dict = known_df.groupby('author').size().to_dict()
-    unknown_counts_dict = unknown_df.groupby('author').size().to_dict()
-
-    for i, row in probs.iterrows():
-        k_author = row['known_author']
-        q_author = row['unknown_author']
-
-        k_count = known_counts_dict.get(k_author, 0)
-        q_count = unknown_counts_dict.get(q_author, 0)
-
-        # Track anomalies for visibility
-        if k_count == 0: missing_k += 1
-        if k_count > 1:  multiple_k += 1
-        if q_count == 0: missing_q += 1
-        if q_count > 1:  multiple_q += 1
-
-        # Skip only if text is genuinely missing from this slice
-        if k_count == 0 or q_count == 0:
-            continue
-
-        # Retrieve concatenated texts
-        k_text = known_texts_dict[k_author]
-        q_text = unknown_texts_dict[q_author]
-        
-        label = k_author == q_author
-        
-        known_texts.append(k_text)
-        questioned_texts.append(q_text)
-        labels.append(label)
-        metadata.append({
-            'known_author': k_author,
-            'unknown_author': q_author,
-        })
-        success_count += 1
-
-    print(f"\n--- Data Mapping Diagnostics: {corpus_name} ---")
-    print(f"  Total Problems Checked: {len(probs)}")
-    print(f"  Successfully Matched:   {success_count}")
-    print(f"  Missing Known Texts:    {missing_k}")
-    print(f"  Missing Questioned:     {missing_q}")
-    print(f"  Multiple Known Matches: {multiple_k} (Concatenated)")
-    print(f"  Multiple Questioned:    {multiple_q} (Concatenated)")
-
-    return known_texts, questioned_texts, labels, metadata
-
 def get_author_centroid(X: torch.Tensor, sample_map: list, author_list: list) -> tuple[torch.Tensor, np.ndarray]:
     """
     Calculates the average embedding (centroid) for all chunks belonging to each author.
@@ -139,6 +62,89 @@ def get_author_centroid(X: torch.Tensor, sample_map: list, author_list: list) ->
     aligned = centroids[indices]
 
     return aligned
+
+def get_unique_author_centroids(
+    unique_authors: list,
+    text_dict: dict,
+    model,
+    tokenizer,
+    device,
+    rank_tensor,
+    masking_threshold,
+    full_author_sequence: np.ndarray,
+    desc: str = ""
+) -> torch.Tensor:
+    """
+    Embed authors exactly once and repeat their embeddings where necessary.
+    """
+    # Look up non-duplicated raw text content
+    unique_texts = [text_dict[auth] for auth in unique_authors]
+    
+    print(f"Generating unique {desc} embeddings ({len(unique_authors)} authors)...")
+    emb_norm, chunk_map = generate_embeddings(
+        unique_texts, model, tokenizer, device, 
+        rank_tensor, masking_threshold, batch_size=128
+    )
+    
+    # Compute centroids
+    centroids = get_author_centroid(emb_norm, chunk_map, unique_authors)
+    
+    # Repeat centroids for each problem where necessary (avoids recomputing embeddings over and over again)
+    alignment_indices = np.searchsorted(unique_authors, full_author_sequence)
+    
+    return centroids[alignment_indices]
+
+
+def prepare_eval_split(
+    data: pd.DataFrame,
+    probs: pd.DataFrame,
+    model,
+    tokenizer,
+    device,
+    rank_tensor,
+    masking_threshold,
+    corpus_name: str,
+    split_name: str
+) -> tuple[np.ndarray, np.ndarray, pd.DataFrame]:
+    """
+    Builds the siamese embeddings for all of the provided problems. 
+    """
+    # Author -> concatenated texts dictionary
+    k_dict = data[data['texttype'] == 'known'].groupby('author')['text'].apply(lambda x: " ".join(x.astype(str))).to_dict()
+    q_dict = data[data['texttype'] == 'unknown'].groupby('author')['text'].apply(lambda x: " ".join(x.astype(str))).to_dict()
+
+    # Drop verification pairs that do not map to matching text inputs
+    valid_probs = probs[
+        probs['known_author'].isin(k_dict.keys()) & 
+        probs['unknown_author'].isin(q_dict.keys())
+    ].copy()
+
+    if len(valid_probs) == 0:
+        return None, None, None
+
+    print(f"--- Data Mapping Diagnostics ({split_name}): {corpus_name} ---")
+    print(f"  Total Problems Checked: {len(probs)}")
+    print(f"  Successfully Matched:   {len(valid_probs)}")
+    print(f"  Missing Pairs Skipped:  {len(probs) - len(valid_probs)}")
+
+    # Extract unique known profiles and generate embeddings
+    unique_k_authors = sorted(list(valid_probs['known_author'].unique()))
+    k_centroids = get_unique_author_centroids(
+        unique_k_authors, k_dict, model, tokenizer, device,
+        rank_tensor, masking_threshold, valid_probs['known_author'].values, desc=f"known {split_name}"
+    )
+
+    unique_q_authors = sorted(list(valid_probs['unknown_author'].unique()))
+    q_centroids = get_unique_author_centroids(
+        unique_q_authors, q_dict, model, tokenizer, device,
+        rank_tensor, masking_threshold, valid_probs['unknown_author'].values, desc=f"questioned {split_name}"
+    )
+
+    # Build siamese pairs
+    X = build_siamese_pair(k_centroids, q_centroids).cpu().numpy()
+    y = (valid_probs['known_author'].values == valid_probs['unknown_author'].values).astype(int)
+
+    return X, y, valid_probs
 
 if __name__ == "__main__":
 
@@ -180,7 +186,7 @@ if __name__ == "__main__":
     print("Loading model", flush=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = load_model(args.model, device)
-    #model = DummyModel()
+    # model = DummyModel()
 
     # Load tokenizer and any
     tokenizer = AutoTokenizer.from_pretrained('roberta-large')
@@ -215,7 +221,7 @@ if __name__ == "__main__":
     for corpus in corpora:
         print(f"\n================ Processing Corpus: {corpus} ================")
         
-        # TRAINING SET EMBEDDINGS
+        # --- TRAINING SET GENERATION ---
         train_corp = train_data[train_data['corpus'] == corpus]
         local_train_probs = train_probs[train_probs['corpus'] == corpus]
 
@@ -223,26 +229,16 @@ if __name__ == "__main__":
             print(f"Skipping {corpus}: No training problems found.")
             continue
 
-        known_train, questioned_train, labels_train, train_meta = get_problem_texts(train_corp, local_train_probs, corpus)
-        if not labels_train:
-            print(f"Skipping {corpus}: Problems could not be matched to available texts.")
+        X_train, y_train, _ = prepare_eval_split(
+            train_corp, local_train_probs, model, tokenizer, device,
+            rank_tensor, masking_threshold, corpus, "Train"
+        )
+        
+        if X_train is None:
+            print(f"Skipping {corpus}: Train problems could not be matched to available texts.")
             continue
 
-        # Get authors and their indices for calculating their centroid
-        k_train_authors = [pair['known_author'] for pair in train_meta]
-        q_train_authors = [pair['unknown_author'] for pair in train_meta]
-
-        print(f"Generating training embeddings for {len(labels_train)} pairs...")
-        k_emb_train, k_train_map = generate_embeddings(known_train, model, tokenizer, device, rank_tensor, masking_threshold, batch_size=64)
-        q_emb_train, q_train_map = generate_embeddings(questioned_train, model, tokenizer, device, rank_tensor, masking_threshold, batch_size=64)
-        
-        k_centroid_train = get_author_centroid(k_emb_train, k_train_map, k_train_authors)
-        q_centroid_train = get_author_centroid(q_emb_train, q_train_map, q_train_authors)
-
-        X_train = build_siamese_pair(k_centroid_train, q_centroid_train).cpu().numpy()
-        y_train = np.array(labels_train, dtype=int)
-
-        # TEST SET EMBEDDINGS
+        # --- TEST SET GENERATION ---
         test_corp = test_data[test_data['corpus'] == corpus]
         local_test_probs = test_probs[test_probs['corpus'] == corpus]
 
@@ -250,42 +246,36 @@ if __name__ == "__main__":
             print(f"Skipping Evaluation for {corpus}: No test problems found.")
             continue
 
-        known_test, questioned_test, labels_test, test_meta = get_problem_texts(test_corp, local_test_probs, corpus)
-        if not labels_test:
+        X_test, y_test, valid_test_probs = prepare_eval_split(
+            test_corp, local_test_probs, model, tokenizer, device,
+            rank_tensor, masking_threshold, corpus, "Test"
+        )
+
+        if X_test is None:
             print(f"Skipping Evaluation for {corpus}: Test problems could not be matched to texts.")
             continue
 
-        k_test_authors = [pair['known_author'] for pair in test_meta]
-        q_test_authors = [pair['unknown_author'] for pair in test_meta]
-        
-        print(f"Generating test embeddings for {len(labels_test)} pairs...")
-        k_emb_test, k_test_map = generate_embeddings(known_test, model, tokenizer, device, rank_tensor, masking_threshold, batch_size=64)
-        q_emb_test, q_test_map = generate_embeddings(questioned_test, model, tokenizer, device, rank_tensor, masking_threshold, batch_size=64)
-
-        k_centroid_test = get_author_centroid(k_emb_test, k_test_map, k_test_authors)
-        q_centroid_test = get_author_centroid(q_emb_test, q_test_map, q_test_authors)
-        
-        X_test = build_siamese_pair(k_centroid_test, q_centroid_test).cpu().numpy()
-        y_test = np.array(labels_test, dtype=int)
-
-        # LOGISTIC REGRESSION FOR PREDICTIONS
+        # --- LOGISTIC REGRESSION CLASSIFICATION ---
         print(f"Training Logistic Regression for {corpus}...")
         clf = LogisticRegression(max_iter=1000, class_weight='balanced')
         clf.fit(X_train, y_train)
 
         y_pred = clf.predict(X_test)
         
-        # Zip metadata, ground truth, and predictions together
-        for meta, y_true_i, y_pred_i in zip(test_meta, y_test, y_pred):
-            meta['corpus'] = corpus
-            meta['ground_truth'] = int(y_true_i)
-            meta['predicted'] = int(y_pred_i)
-            meta['correct'] = int(y_true_i == y_pred_i)
-            all_test_predictions.append(meta)
+        # Gather evaluation tracking arrays using metadata row values
+        for (_, row), y_true_i, y_pred_i in zip(valid_test_probs.iterrows(), y_test, y_pred):
+            all_test_predictions.append({
+                'known_author': row['known_author'],
+                'unknown_author': row['unknown_author'],
+                'corpus': corpus,
+                'ground_truth': int(y_true_i),
+                'predicted': int(y_pred_i),
+                'correct': int(y_true_i == y_pred_i)
+            })
 
         report = classification_report(y_test, y_pred)
         results[corpus] = report
-        print(f"\nResults for {corpus}:", flush=True)
+        print(f"\nResults for {corpus}:")
         print(report)
 
     if all_test_predictions:
