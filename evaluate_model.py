@@ -285,7 +285,7 @@ if __name__ == "__main__":
 
         report = classification_report(y_test, y_pred)
         results[corpus] = report
-        print(f"\nResults for {corpus}:")
+        print(f"\nResults for {corpus}:", flush=True)
         print(report)
 
     if all_test_predictions:
