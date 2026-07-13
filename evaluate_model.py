@@ -48,26 +48,38 @@ def get_problem_texts(data: pd.DataFrame, probs: pd.DataFrame, corpus_name: str=
     multiple_q = 0
     success_count = 0
 
+    # Filter the known and unknown texts
+    known_df = data[data['texttype'] == 'known']
+    unknown_df = data[data['texttype'] == 'unknown']
+    
+    # Concatenate texts by an author to prepare for centroiding
+    known_texts_dict = known_df.groupby('author')['text'].apply(lambda x: " ".join(x.astype(str))).to_dict()
+    unknown_texts_dict = unknown_df.groupby('author')['text'].apply(lambda x: " ".join(x.astype(str))).to_dict()
+    
+    # Make dicts for fast lookup
+    known_counts_dict = known_df.groupby('author').size().to_dict()
+    unknown_counts_dict = unknown_df.groupby('author').size().to_dict()
+
     for i, row in probs.iterrows():
         k_author = row['known_author']
         q_author = row['unknown_author']
 
-        k_matches = data.loc[(data['author'] == k_author) & (data['texttype'] == 'known'), 'text']
-        q_matches = data.loc[(data['author'] == q_author) & (data['texttype'] == 'unknown'), 'text']
+        k_count = known_counts_dict.get(k_author, 0)
+        q_count = unknown_counts_dict.get(q_author, 0)
 
         # Track anomalies for visibility
-        if len(k_matches) == 0: missing_k += 1
-        if len(k_matches) > 1:  multiple_k += 1
-        if len(q_matches) == 0: missing_q += 1
-        if len(q_matches) > 1:  multiple_q += 1
+        if k_count == 0: missing_k += 1
+        if k_count > 1:  multiple_k += 1
+        if q_count == 0: missing_q += 1
+        if q_count > 1:  multiple_q += 1
 
         # Skip only if text is genuinely missing from this slice
-        if len(k_matches) == 0 or len(q_matches) == 0:
+        if k_count == 0 or q_count == 0:
             continue
 
-        # Concatenate all K and Q texts from this author in order to later take the centroid
-        k_text = " ".join(k_matches.astype(str).tolist())
-        q_text = " ".join(q_matches.astype(str).tolist())
+        # Retrieve concatenated texts
+        k_text = known_texts_dict[k_author]
+        q_text = unknown_texts_dict[q_author]
         
         label = k_author == q_author
         
@@ -221,8 +233,8 @@ if __name__ == "__main__":
         q_train_authors = [pair['unknown_author'] for pair in train_meta]
 
         print(f"Generating training embeddings for {len(labels_train)} pairs...")
-        k_emb_train, k_train_map = generate_embeddings(known_train, model, tokenizer, device, rank_tensor, masking_threshold, batch_size=64)
-        q_emb_train, q_train_map = generate_embeddings(questioned_train, model, tokenizer, device, rank_tensor, masking_threshold, batch_size=64)
+        k_emb_train, k_train_map = generate_embeddings(known_train, model, tokenizer, device, rank_tensor, masking_threshold, batch_size=512)
+        q_emb_train, q_train_map = generate_embeddings(questioned_train, model, tokenizer, device, rank_tensor, masking_threshold, batch_size=512)
         
         k_centroid_train = get_author_centroid(k_emb_train, k_train_map, k_train_authors)
         q_centroid_train = get_author_centroid(q_emb_train, q_train_map, q_train_authors)
@@ -247,8 +259,8 @@ if __name__ == "__main__":
         q_test_authors = [pair['unknown_author'] for pair in test_meta]
         
         print(f"Generating test embeddings for {len(labels_test)} pairs...")
-        k_emb_test, k_test_map = generate_embeddings(known_test, model, tokenizer, device, rank_tensor, masking_threshold, batch_size=64)
-        q_emb_test, q_test_map = generate_embeddings(questioned_test, model, tokenizer, device, rank_tensor, masking_threshold, batch_size=64)
+        k_emb_test, k_test_map = generate_embeddings(known_test, model, tokenizer, device, rank_tensor, masking_threshold, batch_size=512)
+        q_emb_test, q_test_map = generate_embeddings(questioned_test, model, tokenizer, device, rank_tensor, masking_threshold, batch_size=512)
 
         k_centroid_test = get_author_centroid(k_emb_test, k_test_map, k_test_authors)
         q_centroid_test = get_author_centroid(q_emb_test, q_test_map, q_test_authors)
