@@ -233,8 +233,8 @@ if __name__ == "__main__":
         q_train_authors = [pair['unknown_author'] for pair in train_meta]
 
         print(f"Generating training embeddings for {len(labels_train)} pairs...")
-        k_emb_train, k_train_map = generate_embeddings(known_train, model, tokenizer, device, rank_tensor, masking_threshold, batch_size=512)
-        q_emb_train, q_train_map = generate_embeddings(questioned_train, model, tokenizer, device, rank_tensor, masking_threshold, batch_size=512)
+        k_emb_train, k_train_map = generate_embeddings(known_train, model, tokenizer, device, rank_tensor, masking_threshold, batch_size=64)
+        q_emb_train, q_train_map = generate_embeddings(questioned_train, model, tokenizer, device, rank_tensor, masking_threshold, batch_size=64)
         
         k_centroid_train = get_author_centroid(k_emb_train, k_train_map, k_train_authors)
         q_centroid_train = get_author_centroid(q_emb_train, q_train_map, q_train_authors)
@@ -259,8 +259,8 @@ if __name__ == "__main__":
         q_test_authors = [pair['unknown_author'] for pair in test_meta]
         
         print(f"Generating test embeddings for {len(labels_test)} pairs...")
-        k_emb_test, k_test_map = generate_embeddings(known_test, model, tokenizer, device, rank_tensor, masking_threshold, batch_size=512)
-        q_emb_test, q_test_map = generate_embeddings(questioned_test, model, tokenizer, device, rank_tensor, masking_threshold, batch_size=512)
+        k_emb_test, k_test_map = generate_embeddings(known_test, model, tokenizer, device, rank_tensor, masking_threshold, batch_size=64)
+        q_emb_test, q_test_map = generate_embeddings(questioned_test, model, tokenizer, device, rank_tensor, masking_threshold, batch_size=64)
 
         k_centroid_test = get_author_centroid(k_emb_test, k_test_map, k_test_authors)
         q_centroid_test = get_author_centroid(q_emb_test, q_test_map, q_test_authors)
