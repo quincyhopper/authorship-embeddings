@@ -1,7 +1,6 @@
 """
 This script is for testing a model on the lambda g corpora and saving predictions.
 """
-import pyreadr 
 import torch
 import numpy as np
 import pandas as pd
@@ -14,14 +13,10 @@ from src.utils import load_model, generate_embeddings, build_siamese_pair, load_
 
 def load_data():
     # Load raw data
-    train_data = pyreadr.read_r('data/lambdag_data/flat_train_data.rds')[None]
-    test_data = pyreadr.read_r('data/lambdag_data/flat_test_data.rds')[None]
-    train_probs = pyreadr.read_r('data/lambdag_data/training_problems.rds')[None]
-    test_probs = pyreadr.read_r('data/lambdag_data/test_problems.rds')[None]
-
-    # Filter Reddit and Blogs
-    train_data = train_data[~train_data['corpus'].isin(['Reddit', "Koppel's Blogs"])]
-    test_data = test_data[~test_data['corpus'].isin(['Reddit', "Koppel's Blogs"])]
+    train_data = pd.read_csv('data/lambdag_data/clean_train.csv')
+    test_data = pd.read_csv('data/lambdag_data/clean_test.csv')
+    train_probs = pd.read_csv('data/lambdag_data/clean_test_problems.csv')
+    test_probs = pd.read_csv('data/lambdag_data/clean_test_problems.csv')
 
     return train_data, test_data, train_probs, test_probs
 
