@@ -22,7 +22,7 @@ if __name__ == "__main__":
 
     for _, row in meta.iterrows():
 
-        id = int(row['id'])
+        id = row['id']
         author = row['author']
 
         filename = f'{id}_text.txt'
