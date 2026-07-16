@@ -9,7 +9,7 @@ from pathlib import Path
 if __name__ == "__main__":
 
     pg_dir = Path('/mnt/iusers01/fatpou01/hum01/msc-comp-ling-2025-2026/e34316nh/scratch/authorship-embeddings/data/gutenberg')
-    meta_path = pg_dir / 'meta/metadata.csv'
+    meta_path = pg_dir / 'metadata/metadata.csv'
     text_dir = pg_dir / 'data/text/'
 
     meta = pd.read_csv(meta_path)
