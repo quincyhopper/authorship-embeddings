@@ -13,10 +13,10 @@ from src.utils import load_model, generate_embeddings, build_siamese_pair, load_
 
 def load_data():
     # Load raw data
-    train_data = pd.read_csv('data/lambdag_data/clean_train.csv')
-    test_data = pd.read_csv('data/lambdag_data/clean_test.csv')
-    train_probs = pd.read_csv('data/lambdag_data/clean_test_problems.csv')
-    test_probs = pd.read_csv('data/lambdag_data/clean_test_problems.csv')
+    train_data = pd.read_csv('data/lambdag_data/train_corpus.csv')
+    test_data = pd.read_csv('data/lambdag_data/test_corpus.csv')
+    train_probs = pd.read_csv('data/lambdag_data/train_problems.csv')
+    test_probs = pd.read_csv('data/lambdag_data/test_problems.csv')
 
     return train_data, test_data, train_probs, test_probs
 
